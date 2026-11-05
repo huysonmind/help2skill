@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import click
 import pytest
 from click.testing import CliRunner
@@ -113,9 +115,11 @@ def test_skill_is_redacted_and_stable(tmp_path, monkeypatch):
     def tool(cache: str) -> None:
         """Tool."""
 
-    monkeypatch.setenv("HOME", str(tmp_path / "home" / "me"))
+    home = str(tmp_path / "home" / "me")
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setenv("USERPROFILE", home)  # Path.home() on Windows
     path = help2skill.write_skill(tool, tmp_path / "SKILL.md", name="tool")
-    assert "(default: ~/.cache)" in path.read_text()
+    assert f"(default: ~{os.sep}.cache)" in path.read_text()
     assert help2skill.check_skill_file(tool, path) == []
 
 
