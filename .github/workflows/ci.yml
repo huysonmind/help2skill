@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        deps: ["latest"]
+        include:
+          # Oldest supported Click/Typer (before Typer vendored Click).
+          - { os: ubuntu-latest, python: "3.10", deps: "click==8.1.7 typer==0.12.5" }
+          # Typer just after vendoring Click.
+          - { os: ubuntu-latest, python: "3.12", deps: "click==8.2.1 typer==0.26.0" }
+          - { os: windows-latest, python: "3.13", deps: "latest" }
+          - { os: macos-latest, python: "3.13", deps: "latest" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Test
+        shell: bash
+        run: |
+          if [ "${{ matrix.deps }}" = "latest" ]; then
+            uv run --group dev pytest --cov=help2skill --cov-report=term-missing
+          else
+            uv run --no-dev --with pytest $(printf -- '--with %s ' ${{ matrix.deps }}) pytest
+          fi
