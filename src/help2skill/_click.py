@@ -9,6 +9,7 @@ from __future__ import annotations
 import enum
 import inspect
 import re
+from collections.abc import Callable
 from typing import Any
 
 from .model import Command, Param
@@ -27,32 +28,55 @@ _TYPE_NAMES = {
 }
 
 
+Resolver = Callable[[Any], Any]
+
+
+def default_resolve(cmd: Any) -> Any:
+    """Load placeholder commands that only build their real command on demand.
+
+    Covers placeholders with a ``materialize()`` method (Hugging Face's ``hf``).
+    Click's documented ``LazyGroup`` pattern needs nothing: it resolves in
+    ``get_command``. Pass your own ``resolve`` for other patterns.
+    """
+    materialize = getattr(cmd, "materialize", None)
+    return materialize() if callable(materialize) else cmd
+
+
 def is_click_command(obj: Any) -> bool:
     return hasattr(obj, "params") and hasattr(obj, "make_context")
 
 
-def from_click(cmd: Any, name: str | None = None, *, parent_ctx: Any = None) -> Command:
+def from_click(
+    cmd: Any,
+    name: str | None = None,
+    *,
+    parent_ctx: Any = None,
+    resolve: Resolver | None = None,
+) -> Command:
     """Build a :class:`Command` tree from a Click (or Typer-built) command."""
+    resolve = resolve or default_resolve
+    cmd = resolve(cmd)
     info_name = name or cmd.name or "cli"
     ctx = _make_context(cmd, info_name, parent_ctx)
     path = (_ctx_path(parent_ctx) if parent_ctx is not None else []) + [info_name]
-    return _build(cmd, info_name, path, ctx)
+    return _build(cmd, info_name, path, ctx, resolve)
 
 
-def from_context(ctx: Any) -> Command:
+def from_context(ctx: Any, resolve: Resolver | None = None) -> Command:
     """Build the tree for the command a live Click context is running."""
     path = _ctx_path(ctx)
-    return _build(ctx.command, path[-1], path, ctx)
+    return _build(ctx.command, path[-1], path, ctx, resolve or default_resolve)
 
 
-def _build(cmd: Any, name: str, path: list[str], ctx: Any) -> Command:
+def _build(cmd: Any, name: str, path: list[str], ctx: Any, resolve: Resolver) -> Command:
     subcommands = []
     for sub_name in _list_commands(cmd, ctx):
         sub = _get_command(cmd, ctx, sub_name)
         if sub is None or getattr(sub, "hidden", False):
             continue
+        sub = resolve(sub)
         sub_ctx = _make_context(sub, sub_name, ctx)
-        subcommands.append(_build(sub, sub_name, path + [sub_name], sub_ctx))
+        subcommands.append(_build(sub, sub_name, path + [sub_name], sub_ctx, resolve))
     return Command(
         name=name,
         path=path,

@@ -24,6 +24,12 @@ scripts' `isinstance(cmd, click.Group)` checks.
    a missing option, or an option at the wrong level. Handles default-command groups.
    CLI `help2skill check` (exit 1) and `help2skill.testing.assert_skill_in_sync`.
 
+6. **Size budget**: `--llms` index above 20,000 characters; SKILL.md index plus
+   `references/commands.md` above 30,000 characters.
+7. **Portability**: home directory written as `~`; warnings for other machine paths;
+   launcher prefixes (`uv run`, `python -m`, …) understood by the drift check;
+   pluggable `resolve` for lazy placeholder commands.
+
 ## Non-goals (v0.1)
 - Installing skills into agent folders (use library-skills).
 - Detecting the calling agent / auto JSON output (planned, via existing detectors).

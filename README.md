@@ -66,6 +66,19 @@ import help2skill.typer
 main = help2skill.typer.command(app, name="mytool")
 ```
 
+### Large CLIs
+
+`--llms` prints the full reference when it fits in 20,000 characters (about 5k tokens).
+Above that it prints the top-level help plus an index of every command, and the agent
+asks for one command with `mytool <command> --llms`. Set `HELP2SKILL_LLMS_MAX_CHARS=0`
+for everything.
+
+### Lazy commands
+
+Click's documented `LazyGroup` pattern works as is. Placeholder commands with a
+`materialize()` method are loaded automatically; for anything else pass
+`resolve=` (Python API) or `--resolve module:func` (command line).
+
 ### argparse
 
 ```console
@@ -79,6 +92,18 @@ $ help2skill skill mytool.cli:app --name mytool --description "Use mytool to ...
     -o src/mytool/.agents/skills/mytool/SKILL.md
 $ help2skill check mytool.cli:app src/mytool/.agents/skills/mytool/SKILL.md
 ```
+
+When the reference is longer than 30,000 characters, `SKILL.md` keeps an index and the
+full reference goes to `references/commands.md` beside it (fully generated; agents read
+it on demand). Change the limit with `--max-chars` (0 = never split) and use the same
+value for `check`.
+
+Your home directory is written as `~`, so the files are identical on every machine and
+the check passes in CI; other machine-specific paths trigger a warning.
+
+Example lines in your hand-written text are checked even with launchers in front:
+`uv run [--with …] mytool …`, `uvx`, `pipx run`, `poetry run`, `python -m mytool`,
+`VAR=value mytool …`.
 
 `skill` creates the file, or refreshes only the block between
 `<!-- help2skill:begin … -->` and `<!-- help2skill:end -->` if it already exists.

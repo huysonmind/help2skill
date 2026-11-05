@@ -8,6 +8,10 @@ from .model import Command, Param
 
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
+# Above these sizes output switches to an index (about 5k and 8k tokens).
+LLMS_MAX_CHARS = 20_000
+SKILL_MAX_CHARS = 30_000
+
 
 def usage(cmd: Command) -> str:
     """One-line invocation signature, e.g. ``tool db migrate [OPTIONS] NAME``."""
@@ -34,12 +38,37 @@ def render_markdown(cmd: Command, *, level: int = 1) -> str:
     return "\n\n".join(sections).rstrip() + "\n"
 
 
+def render_index(cmd: Command, *, level: int = 1, hint: str | None = None) -> str:
+    """Render only ``cmd`` itself plus an index of every command below it."""
+    text = _section(cmd, level, index=True)
+    if hint:
+        text += f"\n\n{hint}"
+    return text + "\n"
+
+
+def render_llms(cmd: Command, *, max_chars: int = LLMS_MAX_CHARS) -> str:
+    """What ``--llms`` prints: the full reference, or an index when it is too long.
+
+    ``max_chars <= 0`` disables the limit.
+    """
+    full = render_markdown(cmd)
+    if max_chars <= 0 or len(full) <= max_chars or not cmd.is_group:
+        return full
+    path = " ".join(cmd.path)
+    hint = (
+        f"Index only: the full reference is {len(full):,} characters. "
+        f"For one command, run `{path} <command> --llms` (or `--help`)."
+    )
+    return render_index(cmd, hint=hint)
+
+
 def render_skill(
     cmd: Command,
     *,
     name: str,
     description: str,
     body: str | None = None,
+    block: str | None = None,
 ) -> str:
     """Render a complete ``SKILL.md`` (Agent Skills format).
 
@@ -52,7 +81,8 @@ def render_skill(
     validate_skill_metadata(name, description)
     front = f"---\nname: {name}\ndescription: {_yaml_str(description)}\n---\n"
     intro = body.strip() + "\n\n" if body else ""
-    return f"{front}\n{intro}{wrap_block(render_markdown(cmd, level=2))}"
+    generated = block if block is not None else render_markdown(cmd, level=2)
+    return f"{front}\n{intro}{wrap_block(generated)}"
 
 
 def default_description(cmd: Command) -> str:

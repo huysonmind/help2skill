@@ -2,22 +2,32 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import click as _click
 
 from ._click import from_context
-from .render import render_markdown
+from .render import LLMS_MAX_CHARS, render_llms
 
 LLMS_HELP = "Print a Markdown reference of this command for LLM agents, then exit."
+MAX_CHARS_ENV = "HELP2SKILL_LLMS_MAX_CHARS"
 
 
 def print_llms(ctx: Any, param: Any, value: bool) -> None:
     """Eager option callback usable with Click and Typer-built commands."""
     if not value or ctx.resilient_parsing:
         return
-    _click.echo(render_markdown(from_context(ctx)), nl=False)
+    _click.echo(render_llms(from_context(ctx), max_chars=_max_chars()), nl=False)
     ctx.exit()
+
+
+def _max_chars() -> int:
+    """Output budget for ``--llms``; set the env var to 0 for the full reference."""
+    try:
+        return int(os.environ.get(MAX_CHARS_ENV, LLMS_MAX_CHARS))
+    except ValueError:
+        return LLMS_MAX_CHARS
 
 
 def llms_option(*param_decls: str, **kwargs: Any):

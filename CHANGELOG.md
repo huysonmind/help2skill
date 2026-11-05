@@ -15,3 +15,12 @@ public interface: any change to it is called out under **Output**.
   wrong level in hand-written examples; default-command groups.
 - `help2skill` command (`markdown`, `skill`, `check`) and
   `help2skill.testing.assert_skill_in_sync`.
+- Large CLIs: `--llms` falls back to an index above 20,000 characters
+  (`HELP2SKILL_LLMS_MAX_CHARS`); `SKILL.md` splits the full reference into
+  `references/commands.md` above 30,000 characters (`--max-chars`).
+- Drift check understands `uv run`, `uvx`, `uv tool run`, `pipx run`, `poetry run`,
+  `pdm run`, `hatch run`, `rye run`, `python -m` and `VAR=value` prefixes.
+- Home directory written as `~` in generated files; warning for other
+  machine-specific paths.
+- Lazy commands: `materialize()` placeholders resolved by default; `resolve=` /
+  `--resolve` for custom patterns.
