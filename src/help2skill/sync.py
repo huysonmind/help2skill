@@ -12,7 +12,7 @@ from __future__ import annotations
 import difflib
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .model import Command
 from .privacy import redact_home
@@ -21,6 +21,8 @@ from .render import SKILL_MAX_CHARS, render_index, render_markdown
 BEGIN = "<!-- help2skill:begin (generated from the CLI; edit outside this block) -->"
 END = "<!-- help2skill:end -->"
 _BLOCK_RE = re.compile(r"<!-- help2skill:begin[^\n]*?-->\n?(.*?)<!-- help2skill:end -->", re.S)
+_BEGIN_RE = re.compile(r"<!-- help2skill:begin([^\n(]*)")
+_SETTING_RE = re.compile(r"([a-z-]+)=(\S+)")
 _CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _FENCE_RE = re.compile(r"^(```|~~~)")
 _ALWAYS_OK = {"--help", "-h", "--llms"}
@@ -40,9 +42,47 @@ REFERENCE_HEADER = (
 
 
 @dataclass
+class Settings:
+    """Options used to generate a block, stored in its begin marker.
+
+    ``help2skill check`` and :func:`help2skill.testing.assert_skill_in_sync` reuse
+    them, so they never have to be repeated.
+    """
+
+    program: str | None = None
+    max_chars: int | None = None
+    hide_defaults: list[str] = field(default_factory=list)
+
+    def marker(self) -> str:
+        parts = []
+        if self.program:
+            parts.append(f"program={self.program}")
+        if self.max_chars is not None:
+            parts.append(f"max-chars={self.max_chars}")
+        if self.hide_defaults:
+            parts.append("hide-default=" + ",".join(self.hide_defaults))
+        settings = " " + " ".join(parts) if parts else ""
+        return f"<!-- help2skill:begin{settings} (generated from the CLI; edit outside this block) -->"
+
+
+def read_settings(text: str) -> Settings:
+    """Settings stored in the begin marker of ``text`` (empty if none)."""
+    match = _BEGIN_RE.search(text)
+    if not match:
+        return Settings()
+    values = dict(_SETTING_RE.findall(match.group(1)))
+    max_chars = values.get("max-chars")
+    return Settings(
+        program=values.get("program"),
+        max_chars=int(max_chars) if max_chars and max_chars.lstrip("-").isdigit() else None,
+        hide_defaults=[v for v in values.get("hide-default", "").split(",") if v],
+    )
+
+
+@dataclass
 class Problem:
     # missing-block | stale-block | missing-reference | stale-reference |
-    # unknown-command | wrong-level-option | unknown-option
+    # unknown-command | wrong-level-option | unknown-option | flag-value | invalid-choice
     kind: str
     message: str
     line: int | None = None
@@ -52,8 +92,9 @@ class Problem:
         return f"{where}{self.message} [{self.kind}]"
 
 
-def wrap_block(generated: str) -> str:
-    return f"{BEGIN}\n{generated.rstrip()}\n{END}\n"
+def wrap_block(generated: str, settings: Settings | None = None) -> str:
+    begin = settings.marker() if settings else BEGIN
+    return f"{begin}\n{generated.rstrip()}\n{END}\n"
 
 
 def extract_block(text: str) -> str | None:
@@ -61,9 +102,9 @@ def extract_block(text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def update_block(text: str, generated: str) -> str:
+def update_block(text: str, generated: str, settings: Settings | None = None) -> str:
     """Replace the generated block in ``text``, or append one if missing."""
-    block = wrap_block(generated)
+    block = wrap_block(generated, settings)
     if _BLOCK_RE.search(text):
         return _BLOCK_RE.sub(lambda _: block.rstrip("\n"), text, count=1)
     return text.rstrip("\n") + "\n\n" + block
@@ -79,7 +120,8 @@ def skill_parts(cmd: Command, *, max_chars: int = SKILL_MAX_CHARS) -> tuple[str,
         "Read only the section of the command you need."
     )
     block = redact_home(render_index(cmd, level=2, hint=hint))
-    return block, REFERENCE_HEADER + redact_home(render_markdown(cmd, level=1))
+    # SKILL.md already has the index of every command; list only direct ones here.
+    return block, REFERENCE_HEADER + redact_home(render_markdown(cmd, level=1, index=False))
 
 
 def check(
@@ -108,7 +150,13 @@ def check(
                 lineterm="",
             )
         )
-        problems.append(Problem("stale-block", "generated block is out of date:\n" + diff))
+        message = "generated block is out of date"
+        if _without_defaults(current) == _without_defaults(expected):
+            message += (
+                " (only default values differ: if they are computed at run time, such as a CPU "
+                "count or a date, leave them out with --hide-default NAME)"
+            )
+        problems.append(Problem("stale-block", message + ":\n" + diff))
     if expected_reference is not None and reference is None:
         problems.append(Problem("missing-reference", f"{REFERENCE_FILE} is missing"))
     elif expected_reference is not None and reference is not None:
@@ -116,6 +164,13 @@ def check(
             problems.append(Problem("stale-reference", f"{REFERENCE_FILE} is out of date"))
     problems.extend(check_references(_without_block(text), cmd))
     return problems
+
+
+_DEFAULT_NOTE_RE = re.compile(r"default: [^;)]*")
+
+
+def _without_defaults(text: str) -> str:
+    return _DEFAULT_NOTE_RE.sub("default", text).strip()
 
 
 def check_references(text: str, cmd: Command) -> list[Problem]:
@@ -133,11 +188,21 @@ def _without_block(text: str) -> str:
 
 def _snippets(text: str):
     in_fence = False
+    pending: tuple[int, str] | None = None  # a command continued with a trailing backslash
     for lineno, line in enumerate(text.splitlines(), start=1):
         if _FENCE_RE.match(line.strip()):
             in_fence = not in_fence
+            if pending:
+                yield pending
+                pending = None
             continue
         if in_fence:
+            if pending:
+                lineno, line = pending[0], pending[1] + " " + line.strip()
+                pending = None
+            if line.rstrip().endswith("\\"):
+                pending = (lineno, line.rstrip()[:-1])
+                continue
             yield lineno, line
         else:
             for match in _CODE_SPAN_RE.finditer(line):
@@ -153,59 +218,188 @@ def _check_invocation(snippet: str, root: Command, lineno: int) -> list[Problem]
     tokens = _strip_launchers(tokens, root.name)
     if not tokens:
         return []
-    problems = []
-    node = root
-    ancestors = [root]
-    expecting_value = False
-    for token in tokens[1:]:
-        if token in _STOP_TOKENS:
-            break
-        if expecting_value:
-            expecting_value = False
-            continue
-        if token.startswith("-") and token != "-":
-            flag = token.split("=", 1)[0]
-            if flag in _ALWAYS_OK:
+    return _Walker(root, lineno).run(tokens[1:])
+
+
+class _Walker:
+    """Follow one command line through the command tree, the way the parser would."""
+
+    def __init__(self, root: Command, lineno: int) -> None:
+        self.node = root
+        self.ancestors = [root]
+        self.lineno = lineno
+        self.problems: list[Problem] = []
+        self.positional = 0
+
+    def report(self, kind: str, message: str) -> None:
+        self.problems.append(Problem(kind, message, self.lineno))
+
+    def run(self, tokens: list[str]) -> list[Problem]:
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if token in _STOP_TOKENS:
+                break
+            if token.startswith("-") and token != "-":
+                i = self.option(tokens, i)
                 continue
-            param = _find_option(node, flag)
-            if param is not None:
-                expecting_value = not param.is_flag and "=" not in token
-                continue
-            owner = next((a for a in ancestors if _find_option(a, flag)), None)
-            if owner is not None:
-                problems.append(
-                    Problem(
-                        "wrong-level-option",
-                        f"`{flag}` belongs to `{' '.join(owner.path)}`, "
-                        f"not `{' '.join(node.path)}` (place it before the subcommand)",
-                        lineno,
-                    )
-                )
-            elif not _looks_like_short_cluster(flag):
-                problems.append(
-                    Problem("unknown-option", f"`{' '.join(node.path)}` has no option `{flag}`", lineno)
-                )
-            continue
+            if not self.positional_token(token):
+                break
+            i += 1
+        return self.problems
+
+    # -- options ---------------------------------------------------------------
+    def option(self, tokens: list[str], i: int) -> int:
+        token = tokens[i]
+        flag, has_value, value = token.partition("=")
+        if flag in _ALWAYS_OK:
+            return i + 1
+        param = _find_option(self.node, flag)
+        if param is None and not flag.startswith("--") and len(flag) > 2 and not has_value:
+            return self.short_cluster(tokens, i)
+        if param is None:
+            self.misplaced_option(flag)
+            # Skip a likely value so it is not mistaken for a subcommand.
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+            if not has_value and nxt is not None and not nxt.startswith("-") and self.node.get(nxt) is None:
+                return i + 2
+            return i + 1
+        if param.is_flag:
+            if has_value:
+                self.report("flag-value", f"`{flag}` is a flag and takes no value")
+            return i + 1
+        if has_value:
+            self.check_choice(param, value)
+            return i + 1
+        return self.consume_values(param, tokens, i + 1)
+
+    def short_cluster(self, tokens: list[str], i: int) -> int:
+        """``-vv``, ``-fq`` or ``-n5``: single-letter options written together."""
+        token = tokens[i]
+        for pos in range(1, len(token)):
+            short = "-" + token[pos]
+            param = _find_option(self.node, short)
+            if param is None:
+                self.misplaced_option(short, cluster=token)
+                return i + 1
+            if not param.is_flag:
+                rest = token[pos + 1 :]
+                if rest:
+                    self.check_choice(param, rest)
+                    return i + 1
+                return self.consume_values(param, tokens, i + 1)
+        return i + 1
+
+    def consume_values(self, param, tokens: list[str], i: int) -> int:
+        if param.value_tokens:
+            count: int | None = len(param.value_tokens)
+        elif isinstance(param.nargs, int) and param.nargs > 1:
+            count = param.nargs
+        elif param.nargs in ("*", "+", "?") or param.optional_value:
+            count = None
+        else:
+            count = 1
+        if count is None:
+            limit = 1 if param.nargs == "?" or param.optional_value else len(tokens)
+            taken = 0
+            while i < len(tokens) and taken < limit and not tokens[i].startswith("-"):
+                if tokens[i] in _STOP_TOKENS:
+                    break
+                self.check_choice(param, tokens[i])
+                i += 1
+                taken += 1
+            return i
+        for k in range(count):
+            if i + k < len(tokens):
+                if k == 0 or not param.value_tokens:
+                    self.check_choice(param, tokens[i + k])
+        return i + count
+
+    def check_choice(self, param, value: str) -> None:
+        if not param.choices or _is_placeholder(value):
+            return
+        allowed = param.choices
+        if param.case_insensitive:
+            ok = value.casefold() in {c.casefold() for c in allowed}
+        else:
+            ok = value in allowed
+        if not ok:
+            name = max(param.opts, key=len) if param.is_option else param.name.upper()
+            self.report(
+                "invalid-choice",
+                f"`{value}` is not a valid value for `{name}` in `{_path(self.node)}` "
+                f"(choose from: {', '.join(allowed)})",
+            )
+
+    def misplaced_option(self, flag: str, *, cluster: str | None = None) -> None:
+        owner = next((a for a in self.ancestors if _find_option(a, flag)), None)
+        if owner is not None:
+            self.report(
+                "wrong-level-option",
+                f"`{flag}` belongs to `{_path(owner)}`, not `{_path(self.node)}` "
+                "(place it before the subcommand)",
+            )
+            return
+        below = next((c for c in self.node.walk() if c is not self.node and _find_option(c, flag)), None)
+        if below is not None:
+            self.report(
+                "wrong-level-option",
+                f"`{flag}` belongs to `{_path(below)}`, not `{_path(self.node)}` "
+                f"(place it after `{below.path[-1]}`)",
+            )
+            return
+        where = f" (in `{cluster}`)" if cluster else ""
+        message = f"`{_path(self.node)}` has no option `{flag}`{where}"
+        names = [o for p in self.node.options for o in (*p.opts, *p.secondary_opts)]
+        message += _did_you_mean(flag, names)
+        self.report("unknown-option", message)
+
+    # -- positionals -------------------------------------------------------------
+    def positional_token(self, token: str) -> bool:
+        """Handle a non-option token; return False to stop checking the line."""
+        node = self.node
         if node.is_group:
             child = node.get(token)
             if child is not None:
-                node = child
-                ancestors.append(child)
-                continue
+                self.enter(child)
+                return True
+            if token in node.hidden_subcommands:
+                return False
             default = node.get(node.default_command) if node.default_command else None
             if default is not None:
                 # The token is the first argument of the default subcommand.
-                node = default
-                ancestors.append(node)
-                continue
+                self.enter(default)
+                return self.positional_token(token)
             if _is_placeholder(token):
-                break
-            problems.append(
-                Problem("unknown-command", f"`{' '.join(node.path)}` has no subcommand `{token}`", lineno)
+                return False
+            names = [c.name for c in node.subcommands] + [a for c in node.subcommands for a in c.aliases]
+            self.report(
+                "unknown-command",
+                f"`{_path(node)}` has no subcommand `{token}`" + _did_you_mean(token, names),
             )
-            break
-        # Leaf command: remaining positional tokens are argument values.
-    return problems
+            return False
+        # Leaf command: check the value against the matching argument's choices.
+        args = node.arguments
+        if self.positional < len(args):
+            arg = args[self.positional]
+            self.check_choice(arg, token)
+            if not arg.multiple:
+                self.positional += 1
+        return True
+
+    def enter(self, child: Command) -> None:
+        self.node = child
+        self.ancestors.append(child)
+        self.positional = 0
+
+
+def _path(cmd: Command) -> str:
+    return " ".join(cmd.path)
+
+
+def _did_you_mean(word: str, candidates: list[str]) -> str:
+    close = difflib.get_close_matches(word, candidates, n=1, cutoff=0.6)
+    return f"; did you mean `{close[0]}`?" if close else ""
 
 
 def _strip_launchers(tokens: list[str], root_name: str) -> list[str]:
@@ -248,11 +442,6 @@ def _find_option(cmd: Command, flag: str):
         if flag in p.opts or flag in p.secondary_opts:
             return p
     return None
-
-
-def _looks_like_short_cluster(flag: str) -> bool:
-    # "-vvv" or "-n5": too ambiguous to judge without parser rules.
-    return not flag.startswith("--") and len(flag) > 2
 
 
 def _is_placeholder(token: str) -> bool:

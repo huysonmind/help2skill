@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import importlib
 import os
 import sys
@@ -12,27 +13,37 @@ from typing import Any
 from . import (
     REFERENCE_FILE,
     SKILL_MAX_CHARS,
+    UNNAMED,
     __version__,
     check_skill_file,
     find_machine_paths,
     introspect,
+    program_name,
+    read_settings,
     redact_home,
     render_llms,
     write_skill,
 )
+
+_STALE_KINDS = ("stale-block", "missing-block", "stale-reference", "missing-reference")
+
+
+class UsageError(Exception):
+    """A problem with the user's input: printed as one line, exit status 2."""
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="help2skill",
         description="Generate LLM-ready docs and SKILL.md files from Click, Typer and argparse CLIs.",
+        epilog="TARGET is the import path of the CLI object, e.g. mypkg.cli:app. For a function "
+        "that builds an argparse parser, write mypkg.cli:build_parser() (with parentheses).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="action", required=True)
 
     md = sub.add_parser("markdown", help="Print the Markdown reference for a CLI.")
-    md.add_argument("target", help="Import path of the CLI object, e.g. mypkg.cli:app")
-    md.add_argument("--program", help="Program name users type (default: from the CLI object)")
+    md.add_argument("target", help="CLI object, e.g. mypkg.cli:app")
     md.add_argument(
         "--max-chars",
         type=int,
@@ -41,10 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     skill = sub.add_parser("skill", help="Create a SKILL.md, or refresh its generated block.")
-    skill.add_argument("target", help="Import path of the CLI object, e.g. mypkg.cli:app")
-    skill.add_argument("--name", required=True, help="Skill name (lowercase letters, digits, hyphens)")
+    skill.add_argument("target", help="CLI object, e.g. mypkg.cli:app")
+    skill.add_argument(
+        "--name", help="Skill name: lowercase letters, digits, hyphens (needed to create the file)"
+    )
     skill.add_argument("--description", help="Skill description (default: from the CLI help)")
-    skill.add_argument("--program", help="Program name users type (default: the skill name)")
     skill.add_argument(
         "--output",
         "-o",
@@ -54,19 +66,33 @@ def build_parser() -> argparse.ArgumentParser:
     skill.add_argument(
         "--max-chars",
         type=int,
-        default=SKILL_MAX_CHARS,
         help=f"Above this size, keep an index in SKILL.md and the full reference in {REFERENCE_FILE} "
-        f"(default: {SKILL_MAX_CHARS}; 0 = never split)",
+        f"(default: {SKILL_MAX_CHARS}, or the value stored in the file; 0 = never split)",
     )
 
     chk = sub.add_parser("check", help="Exit 1 if a SKILL.md has drifted from the CLI.")
-    chk.add_argument("target", help="Import path of the CLI object, e.g. mypkg.cli:app")
+    chk.add_argument("target", help="CLI object, e.g. mypkg.cli:app")
     chk.add_argument("path", type=Path, help="SKILL.md to check")
-    chk.add_argument("--program", help="Program name users type (default: the skill name)")
-    chk.add_argument(
-        "--max-chars", type=int, default=SKILL_MAX_CHARS, help="Must match the value used by `skill`"
-    )
+    chk.add_argument("--max-chars", type=int, help="Override the value stored in the file")
     for p in (md, skill, chk):
+        p.add_argument(
+            "--program",
+            help="Program name users type (default: stored in the file, else the console script "
+            "that points at TARGET, else the CLI's own name)",
+        )
+        p.add_argument(
+            "--hide-default",
+            action="append",
+            metavar="NAME",
+            dest="hide_defaults",
+            help="Leave out the default of this parameter (name or option), e.g. one computed at "
+            "run time; repeatable. Stored in the file.",
+        )
+        p.add_argument(
+            "--app-dir",
+            metavar="DIR",
+            help="Import TARGET from this directory, e.g. src (default: the current directory)",
+        )
         p.add_argument(
             "--resolve",
             metavar="MODULE:FUNC",
@@ -75,19 +101,54 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def load_target(spec: str, *, call: bool = True) -> Any:
-    """Import ``module:attr`` (attr may be dotted, or a function returning a parser)."""
+def load_target(spec: str, *, call: bool = True, app_dir: str | None = None) -> Any:
+    """Import ``module:attr``; ``module:func()`` calls ``func`` (e.g. a parser factory)."""
     module_name, _, attr = spec.partition(":")
-    if not module_name or not attr:
-        raise SystemExit(f"help2skill: target must look like module:attr, got {spec!r}")
-    if os.getcwd() not in sys.path:
-        sys.path.insert(0, os.getcwd())
-    obj: Any = importlib.import_module(module_name)
-    for part in attr.split("."):
-        obj = getattr(obj, part)
-    if call and callable(obj) and not _is_cli_object(obj):
-        obj = obj()
+    if not module_name or not attr or "/" in module_name or module_name.endswith(".py"):
+        raise UsageError(f"target must look like module.path:attribute, got {spec!r}")
+    explicit_call = attr.endswith("()")
+    attr = attr.removesuffix("()")
+    for directory in (os.getcwd(), app_dir):
+        if directory and os.path.abspath(directory) not in sys.path:
+            sys.path.insert(0, os.path.abspath(directory))
+    # argparse names an unnamed parser after sys.argv[0]; make that detectable.
+    saved_argv = sys.argv
+    sys.argv = [UNNAMED, *sys.argv[1:]]
+    try:
+        try:
+            obj: Any = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            raise UsageError(
+                f"cannot import {module_name!r}: {exc}{_src_hint(module_name, app_dir)}"
+            ) from exc
+        for part in attr.split("."):
+            if not hasattr(obj, part):
+                names = [n for n in dir(obj) if not n.startswith("_")]
+                close = difflib.get_close_matches(part, names, n=1)
+                hint = f"; did you mean {close[0]!r}?" if close else ""
+                raise UsageError(f"{module_name!r} has no attribute {attr!r}{hint}")
+            obj = getattr(obj, part)
+        if call and explicit_call:
+            obj = obj()
+        elif call and callable(obj) and not _is_cli_object(obj):
+            if "parser" not in attr.rsplit(".", 1)[-1].lower():
+                raise UsageError(
+                    f"{spec} is a function, not a Click command, Typer app or ArgumentParser. "
+                    f"If it returns a parser, write {spec}() to call it."
+                )
+            obj = obj()
+    except SystemExit as exc:
+        raise UsageError(f"importing {spec} exited (status {exc.code}); point at the CLI object") from exc
+    finally:
+        sys.argv = saved_argv
     return obj
+
+
+def _src_hint(module_name: str, app_dir: str | None) -> str:
+    top = module_name.split(".")[0]
+    if app_dir is None and (Path("src") / top).exists():
+        return "; the package is under src/: add --app-dir src or install the project (pip install -e .)"
+    return ""
 
 
 def _is_cli_object(obj: Any) -> bool:
@@ -98,26 +159,61 @@ def _is_cli_object(obj: Any) -> bool:
     )
 
 
+def entry_point_name(spec: str) -> str | None:
+    """Name of the installed console script that runs ``spec`` (``module:attr``), if any."""
+    from importlib.metadata import entry_points
+
+    target = spec.removesuffix("()").replace(" ", "")
+    for ep in entry_points(group="console_scripts"):
+        if ep.value.replace(" ", "") == target:
+            return ep.name
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    cli = load_target(args.target)
-    resolve = load_target(args.resolve, call=False) if args.resolve else None
+    try:
+        return _run(args)
+    except UsageError as exc:
+        print(f"help2skill: error: {exc}", file=sys.stderr)
+        return 2
+    except (ValueError, TypeError, FileNotFoundError) as exc:
+        print(f"help2skill: error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _run(args: argparse.Namespace) -> int:
+    cli = load_target(args.target, app_dir=args.app_dir)
+    resolve = load_target(args.resolve, call=False, app_dir=args.app_dir) if args.resolve else None
+    stored = None
+    if args.action == "skill" and args.output and args.output.exists():
+        stored = read_settings(args.output.read_text(encoding="utf-8")).program
+    if args.action == "check" and args.path.exists():
+        stored = read_settings(args.path.read_text(encoding="utf-8")).program
+    program = program_name(cli, args.program, stored, entry_point_name(args.target), resolve=resolve)
+
     if args.action == "markdown":
-        cmd = introspect(cli, args.program, resolve=resolve)
+        if program is None:
+            _warn_unnamed(introspect(cli, resolve=resolve).name)
+        cmd = introspect(cli, program, resolve=resolve, hide_defaults=args.hide_defaults)
         text = redact_home(render_llms(cmd, max_chars=args.max_chars))
         _warn_machine_paths(text, "output")
         sys.stdout.write(text)
         return 0
+
     if args.action == "skill":
+        if args.output is None and not args.name:
+            raise UsageError("pass --name (to create skills/<name>/SKILL.md) or --output PATH")
         output = args.output or Path("skills") / args.name / "SKILL.md"
         path = write_skill(
             cli,
             output,
             name=args.name,
             description=args.description,
-            program=args.program,
+            program=program,
             max_chars=args.max_chars,
             resolve=resolve,
+            hide_defaults=args.hide_defaults,
         )
         print(f"wrote {path}")
         reference = path.parent / REFERENCE_FILE
@@ -127,12 +223,32 @@ def main(argv: list[str] | None = None) -> int:
             if written.exists():
                 _warn_machine_paths(written.read_text(encoding="utf-8"), str(written))
         return 0
+
     problems = check_skill_file(
-        cli, args.path, program=args.program, max_chars=args.max_chars, resolve=resolve
+        cli,
+        args.path,
+        program=program,
+        max_chars=args.max_chars,
+        resolve=resolve,
+        hide_defaults=args.hide_defaults,
     )
     for problem in problems:
         print(f"{args.path}: {problem}", file=sys.stderr)
-    return 1 if problems else 0
+    if any(p.kind in _STALE_KINDS for p in problems):
+        print(f"help2skill: regenerate with: help2skill skill {args.target} -o {args.path}", file=sys.stderr)
+    if problems:
+        return 1
+    print(f"{args.path}: in sync with {args.target}")
+    return 0
+
+
+def _warn_unnamed(name: str) -> None:
+    shown = "the script name" if name == UNNAMED else repr(name)
+    print(
+        f"help2skill: warning: program name unknown (the CLI calls itself {shown}); "
+        "pass --program NAME or install the console script",
+        file=sys.stderr,
+    )
 
 
 def _warn_machine_paths(text: str, where: str) -> None:

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any
 
-import click as _click
-
+# No top-level ``import click``: Typer >= 0.26 vendors Click, so a Typer app may run
+# without the ``click`` package installed.
 from ._click import from_context
 from .render import LLMS_MAX_CHARS, render_llms
 
@@ -18,8 +19,17 @@ def print_llms(ctx: Any, param: Any, value: bool) -> None:
     """Eager option callback usable with Click and Typer-built commands."""
     if not value or ctx.resilient_parsing:
         return
-    _click.echo(render_llms(from_context(ctx), max_chars=_max_chars()), nl=False)
+    text = render_llms(
+        from_context(ctx), max_chars=_max_chars(), subcommand_flag=_subcommands_have_llms(ctx.command)
+    )
+    sys.stdout.write(text)
+    sys.stdout.flush()
     ctx.exit()
+
+
+def _subcommands_have_llms(cmd: Any) -> bool:
+    subs = list((getattr(cmd, "commands", None) or {}).values())
+    return bool(subs) and all(any(getattr(p, "name", None) == "llms" for p in s.params) for s in subs)
 
 
 def _max_chars() -> int:
@@ -36,8 +46,10 @@ def llms_option(*param_decls: str, **kwargs: Any):
     On a group it prints the whole subtree, so putting it on the root is enough
     for most tools. Use :func:`add_llms_option` to add it at every level.
     """
+    import click
+
     kwargs.setdefault("help", LLMS_HELP)
-    return _click.option(
+    return click.option(
         *(param_decls or ("--llms",)),
         is_flag=True,
         expose_value=False,
@@ -75,7 +87,9 @@ def _option_class(cmd: Any) -> Any:
         from typer.core import TyperOption
 
         return TyperOption
-    return _click.Option
+    import click
+
+    return click.Option
 
 
 def _iter_commands(cmd: Any):

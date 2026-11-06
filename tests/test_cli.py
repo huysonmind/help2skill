@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from help2skill.cli import load_target, main
+from help2skill.cli import UsageError, load_target, main
 
 TESTS = Path(__file__).parent
 
@@ -33,6 +33,6 @@ def test_skill_then_check(tmp_path, capsys):
 
 
 def test_load_target_errors():
-    with pytest.raises(SystemExit):
+    with pytest.raises(UsageError):
         load_target("no_colon")
     assert load_target("sample_clis:build_parser").prog == "notes"

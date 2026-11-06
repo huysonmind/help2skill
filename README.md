@@ -35,7 +35,8 @@ def cli(): ...
 $ mytool --llms
 ```
 
-To get `--llms` on every subcommand (`mytool db --llms` prints just that subtree):
+`llms_option()` adds the flag to the root only, which prints the whole tree. To get
+`--llms` on every subcommand too (`mytool db --llms` prints just that subtree):
 
 ```python
 from help2skill.click import add_llms_option
@@ -58,32 +59,45 @@ app = typer.Typer()
 def main(llms: LlmsOption = False): ...
 ```
 
-Or `--llms` at every level, using the returned Click command as the entry point:
+Or `--llms` at every level: build the command once and make it your console script.
 
 ```python
+# mytool/cli.py
 import help2skill.typer
 
 main = help2skill.typer.command(app, name="mytool")
 ```
 
+```toml
+# pyproject.toml
+[project.scripts]
+mytool = "mytool.cli:main"
+```
+
+No `click` package is needed with Typer ≥ 0.26, which ships its own copy.
+
+### argparse
+
+argparse has no hook for an extra flag, so use the command line (or the Python API):
+
+```console
+$ help2skill markdown mytool.cli:parser
+$ help2skill markdown "mytool.cli:build_parser()"   # a function that returns the parser
+```
+
 ### Large CLIs
 
 `--llms` prints the full reference when it fits in 20,000 characters (about 5k tokens).
-Above that it prints the top-level help plus an index of every command, and the agent
-asks for one command with `mytool <command> --llms`. Set `HELP2SKILL_LLMS_MAX_CHARS=0`
-for everything.
+Above that it prints the top-level help plus an index of every command, and tells the
+agent how to ask for one command (`mytool <command> --llms`, or `--help` when only the
+root has the flag). Set `HELP2SKILL_LLMS_MAX_CHARS=0` for everything. Options repeated
+identically in three or more commands are described once, under "Shared options".
 
 ### Lazy commands
 
 Click's documented `LazyGroup` pattern works as is. Placeholder commands with a
 `materialize()` method are loaded automatically; for anything else pass
 `resolve=` (Python API) or `--resolve module:func` (command line).
-
-### argparse
-
-```console
-$ help2skill markdown mytool.cli:build_parser --program mytool
-```
 
 ## SKILL.md and drift checks
 
@@ -93,35 +107,59 @@ $ help2skill skill mytool.cli:app --name mytool --description "Use mytool to ...
 $ help2skill check mytool.cli:app src/mytool/.agents/skills/mytool/SKILL.md
 ```
 
+`skill` creates the file, or refreshes only the block between
+`<!-- help2skill:begin … -->` and `<!-- help2skill:end -->` if it already exists
+(`--name` is then optional). Write your own guidance above or below the block.
+
+**Program name.** Commands are written with the name users type. help2skill uses
+`--program` if given, else the installed console script that points at the target,
+else the CLI's own name (`@click.group(name="mytool")`, `ArgumentParser(prog="mytool")`),
+else the skill name. `markdown` warns when it can only guess.
+
+**Settings are stored in the file.** The begin marker records the program name,
+`--max-chars` and `--hide-default`, so `check`, a refresh and the pytest helper reuse
+them without repeating any option.
+
+**Stable in CI.** The output does not depend on the machine or on the Click/Typer
+version: commands are sorted, type names are normalised and your home directory is
+written as `~` (other machine-specific paths trigger a warning). A default computed at
+run time (CPU count, today's date) would still differ, so leave it out:
+
+```console
+$ help2skill skill mytool.cli:app -o SKILL.md --hide-default workers --hide-default --since
+```
+
 When the reference is longer than 30,000 characters, `SKILL.md` keeps an index and the
 full reference goes to `references/commands.md` beside it (fully generated; agents read
-it on demand). Change the limit with `--max-chars` (0 = never split) and use the same
-value for `check`.
+it on demand). Change the limit with `--max-chars` (0 = never split).
 
-Your home directory is written as `~`, so the files are identical on every machine and
-the check passes in CI; other machine-specific paths trigger a warning.
-
-Example lines in your hand-written text are checked even with launchers in front:
-`uv run [--with …] mytool …`, `uvx`, `pipx run`, `poetry run`, `python -m mytool`,
-`VAR=value mytool …`.
-
-`skill` creates the file, or refreshes only the block between
-`<!-- help2skill:begin … -->` and `<!-- help2skill:end -->` if it already exists.
-Write your own guidance above or below the block.
+**What the check catches** in code spans and fenced blocks of your hand-written text:
+unknown subcommands and options (with "did you mean"), options at the wrong level,
+values not among an option's or argument's choices, values given to flags, and
+single-letter clusters such as `-fq`. Lines continued with `\` are joined, and lines
+are recognised with launchers in front: `uv run [--with …] mytool …`, `uvx`,
+`pipx run`, `poetry run`, `python -m mytool`, `VAR=value mytool …`.
 
 Shipping the skill inside your package under `.agents/skills/<name>/` makes it
-installable with [library-skills](https://github.com/tiangolo/library-skills).
+installable with [library-skills](https://github.com/tiangolo/library-skills). With
+setuptools, add the folder to `package-data`; hatchling includes it by default.
 
-In pytest:
+In pytest (build the path from `__file__` so the test runs from any directory):
 
 ```python
+from pathlib import Path
+
 from help2skill.testing import assert_skill_in_sync
 from mytool.cli import app
 
+SKILL = Path(__file__).parents[1] / "src/mytool/.agents/skills/mytool/SKILL.md"
+
 
 def test_skill_in_sync():
-    assert_skill_in_sync(app, "src/mytool/.agents/skills/mytool/SKILL.md")
+    assert_skill_in_sync(app, SKILL)
 ```
+
+With a `src/` layout that is not installed, pass `--app-dir src` to the command line.
 
 ## Python API
 
@@ -136,10 +174,11 @@ problems = help2skill.check_skill_file(app, "SKILL.md")
 
 ## Security
 
-`help2skill` imports the module you point it at (and calls it if it is a function), the
-same as running your CLI. Generated files copy your help text verbatim, so review them
-for machine-specific values before committing. See [SECURITY.md](SECURITY.md).
+`help2skill` imports the module you point it at, the same as running your CLI. It calls
+a function only when you write `module:func()` or the function's name contains
+"parser"; it never calls your `main()`. Generated files copy your help text verbatim, so review them
+for machine-specific values before committing. See [SECURITY.md](https://github.com/huysonmind/help2skill/blob/main/SECURITY.md).
 
 ## License
 
-[MIT](LICENSE). Built with AI assistance (Claude).
+[MIT](https://github.com/huysonmind/help2skill/blob/main/LICENSE). Built with AI assistance (Claude).

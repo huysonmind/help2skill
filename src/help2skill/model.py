@@ -24,6 +24,13 @@ class Param:
     envvars: list[str] = field(default_factory=list)
     help: str | None = None
     metavar: str | None = None
+    # One token per value slot, e.g. ["NAME", "[integer|text]"] for a 2-tuple option.
+    value_tokens: list[str] | None = None
+    count: bool = False  # -v, -vv, -vvv
+    range: str | None = None  # e.g. "1<=x<=50"
+    case_insensitive: bool = False
+    prompts: bool = False  # asks interactively when omitted
+    optional_value: bool = False  # option may be given without its value
 
     @property
     def is_option(self) -> bool:
@@ -43,6 +50,11 @@ class Command:
     deprecated: bool = False
     # Subcommand run when the first token is not a subcommand name (click-default-group).
     default_command: str | None = None
+    aliases: list[str] = field(default_factory=list)
+    # Names that run a command but are not documented (hidden commands).
+    hidden_subcommands: list[str] = field(default_factory=list)
+    # Groups of options that cannot be combined: (option names, one is required).
+    exclusive: list[tuple[list[str], bool]] = field(default_factory=list)
 
     @property
     def is_group(self) -> bool:
@@ -63,8 +75,9 @@ class Command:
             yield from sub.walk()
 
     def get(self, name: str) -> Command | None:
+        """Find a direct subcommand by name or alias."""
         for sub in self.subcommands:
-            if sub.name == name:
+            if sub.name == name or name in sub.aliases:
                 return sub
         return None
 

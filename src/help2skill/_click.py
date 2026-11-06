@@ -14,17 +14,21 @@ from typing import Any
 
 from .model import Command, Param
 
-# Older Click versions prefix short help with this; the renderer marks deprecation itself.
-_DEPRECATED_PREFIX = re.compile(r"^\(deprecated\)\s*", re.I)
+# Click marks deprecated commands in their help text; the renderer marks them itself.
+_DEPRECATED_RE = re.compile(r"\s*\(deprecated(?::[^)]*)?\)\s*", re.I)
 
 # Parameters that exist for the human shell, not for the agent.
 INTERNAL_PARAMS = frozenset({"help", "install_completion", "show_completion", "llms"})
 
+# Type names differ between Click versions ("integer range", "int_range"...);
+# normalise them so the output is the same everywhere.
 _TYPE_NAMES = {
     "str": "text",
     "string": "text",
     "integer": "int",
     "boolean": "bool",
+    "filename": "file",
+    "unprocessed": "text",
 }
 
 
@@ -70,22 +74,33 @@ def from_context(ctx: Any, resolve: Resolver | None = None) -> Command:
 
 def _build(cmd: Any, name: str, path: list[str], ctx: Any, resolve: Resolver) -> Command:
     subcommands = []
-    for sub_name in _list_commands(cmd, ctx):
+    hidden = []
+    # Sorted: Click sorts, recent Typer keeps definition order; sorting keeps the
+    # output identical across versions.
+    for sub_name in sorted(_list_commands(cmd, ctx)):
         sub = _get_command(cmd, ctx, sub_name)
-        if sub is None or getattr(sub, "hidden", False):
+        if sub is None:
+            continue
+        if getattr(sub, "hidden", False):
+            hidden.append(sub_name)
             continue
         sub = resolve(sub)
         sub_ctx = _make_context(sub, sub_name, ctx)
         subcommands.append(_build(sub, sub_name, path + [sub_name], sub_ctx, resolve))
+    help_text = _clean(getattr(cmd, "help", None), strip_deprecated=True)
+    epilog = _clean(getattr(cmd, "epilog", None))
+    if epilog:
+        help_text = f"{help_text}\n\n{epilog}" if help_text else epilog
     return Command(
         name=name,
         path=path,
-        help=_clean(getattr(cmd, "help", None)),
+        help=help_text,
         short_help=_short_help(cmd),
         params=[_param(p) for p in cmd.params if _visible(p)],
         subcommands=subcommands,
         deprecated=bool(getattr(cmd, "deprecated", False)),
         default_command=getattr(cmd, "default_cmd_name", None),
+        hidden_subcommands=hidden,
     )
 
 
@@ -110,7 +125,7 @@ def _ctx_path(ctx: Any) -> list[str]:
 def _list_commands(cmd: Any, ctx: Any) -> list[str]:
     if hasattr(cmd, "list_commands") and ctx is not None:
         return list(cmd.list_commands(ctx))
-    return sorted(getattr(cmd, "commands", {}) or {})
+    return list(getattr(cmd, "commands", {}) or {})
 
 
 def _get_command(cmd: Any, ctx: Any, name: str) -> Any:
@@ -126,27 +141,74 @@ def _visible(p: Any) -> bool:
 def _param(p: Any) -> Param:
     kind = "option" if p.param_type_name == "option" else "argument"
     ptype = p.type
-    type_name = getattr(ptype, "name", None) or type(ptype).__name__
-    type_name = _TYPE_NAMES.get(type_name, type_name)
-    choices = getattr(ptype, "choices", None)
-    is_flag = bool(getattr(p, "is_flag", False)) and not getattr(p, "count", False)
+    count = bool(getattr(p, "count", False))
+    is_flag = bool(getattr(p, "is_flag", False)) or count
     envvar = getattr(p, "envvar", None)
+    nargs = p.nargs
+    value_tokens = None
+    if not is_flag:
+        if _is_tuple(ptype):
+            value_tokens = [_value_token(t) for t in ptype.types]
+        elif isinstance(nargs, int) and nargs > 1:
+            value_tokens = [_value_token(ptype)] * nargs
+    choices = getattr(ptype, "choices", None)
     return Param(
         name=p.name or "",
         kind=kind,
         opts=list(p.opts),
         secondary_opts=list(getattr(p, "secondary_opts", []) or []),
-        type="bool" if is_flag else type_name,
-        choices=[str(_plain(c)) for c in choices] if choices else None,
+        type="bool" if is_flag and not count else type_name(ptype),
+        choices=[str(_plain(c)) for c in choices] if choices and not count else None,
         required=bool(p.required),
-        default=_default(p, is_flag),
+        default=None if count else _default(p, is_flag),
         is_flag=is_flag,
-        multiple=bool(getattr(p, "multiple", False)) or p.nargs == -1,
-        nargs=p.nargs,
+        multiple=bool(getattr(p, "multiple", False)) or nargs == -1 or count,
+        nargs=nargs,
         envvars=[envvar] if isinstance(envvar, str) else list(envvar or []),
         help=_clean(getattr(p, "help", None)),
         metavar=p.metavar,
+        value_tokens=value_tokens,
+        count=count,
+        range=None if count else _range(ptype),
+        case_insensitive=choices is not None and getattr(ptype, "case_sensitive", True) is False,
+        prompts=bool(getattr(p, "prompt", None)),
+        optional_value=bool(getattr(p, "_flag_needs_value", False)),
     )
+
+
+def type_name(ptype: Any) -> str:
+    """Stable, lowercase name of a Click parameter type."""
+    name = str(getattr(ptype, "name", None) or type(ptype).__name__).lower()
+    name = name.replace("_", " ")
+    if name.endswith(" range"):
+        name = name[: -len(" range")]
+    return _TYPE_NAMES.get(name, name).replace(" ", "_")
+
+
+def _is_tuple(ptype: Any) -> bool:
+    return isinstance(getattr(ptype, "types", None), (list, tuple)) and getattr(ptype, "is_composite", False)
+
+
+def _value_token(ptype: Any) -> str:
+    choices = getattr(ptype, "choices", None)
+    if choices:
+        return "[" + "|".join(str(_plain(c)) for c in choices) + "]"
+    return type_name(ptype).upper()
+
+
+def _range(ptype: Any) -> str | None:
+    if not hasattr(ptype, "min_open"):
+        return None
+    lo, hi = getattr(ptype, "min", None), getattr(ptype, "max", None)
+    lo_op = "<" if ptype.min_open else "<="
+    hi_op = "<" if ptype.max_open else "<="
+    if lo is not None and hi is not None:
+        return f"{lo}{lo_op}x{hi_op}{hi}"
+    if lo is not None:
+        return f"x{'>' if ptype.min_open else '>='}{lo}"
+    if hi is not None:
+        return f"x{hi_op}{hi}"
+    return None
 
 
 def _default(p: Any, is_flag: bool) -> str | None:
@@ -172,7 +234,7 @@ def _plain(value: Any) -> Any:
 
 def _short_help(cmd: Any) -> str | None:
     if getattr(cmd, "short_help", None):
-        return _clean(cmd.short_help)
+        return _clean(cmd.short_help, strip_deprecated=True)
     getter = getattr(cmd, "get_short_help_str", None)
     if getter is None:
         return None
@@ -180,12 +242,15 @@ def _short_help(cmd: Any) -> str | None:
         text = getter(limit=200)
     except TypeError:  # pragma: no cover - very old Click
         text = getter()
-    return _clean(_DEPRECATED_PREFIX.sub("", text or ""))
+    return _clean(text, strip_deprecated=True)
 
 
-def _clean(text: str | None) -> str | None:
+def _clean(text: str | None, *, strip_deprecated: bool = False) -> str | None:
     if not text:
         return None
     # Click's "\b" marks a paragraph that must not be rewrapped; drop it.
     lines = [line for line in inspect.cleandoc(text).splitlines() if line.strip() != "\b"]
-    return "\n".join(lines).strip() or None
+    text = "\n".join(lines).strip()
+    if strip_deprecated:
+        text = _DEPRECATED_RE.sub(" ", text).strip()
+    return text or None
