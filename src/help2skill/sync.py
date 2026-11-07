@@ -240,6 +240,8 @@ class _Walker:
             token = tokens[i]
             if token in _STOP_TOKENS:
                 break
+            if _PROSE_OPTION_RE.match(token):
+                break  # "-s/--short" names an option in prose; it is not a command line
             if token.startswith("-") and token != "-":
                 i = self.option(tokens, i)
                 continue
@@ -255,6 +257,8 @@ class _Walker:
         if flag in _ALWAYS_OK:
             return i + 1
         param = _find_option(self.node, flag)
+        if param is None and self.enter_default_for(flag):
+            return self.option(tokens, i)
         if param is None and not flag.startswith("--") and len(flag) > 2 and not has_value:
             return self.short_cluster(tokens, i)
         if param is None:
@@ -387,6 +391,24 @@ class _Walker:
                 self.positional += 1
         return True
 
+    def enter_default_for(self, flag: str) -> bool:
+        """``tool --opt`` where ``--opt`` belongs to the group's default command.
+
+        Groups with a default command (click-default-group) pass options they do
+        not know to it, so ``llm --system x`` means ``llm prompt --system x``.
+        """
+        node = self.node
+        default = node.get(node.default_command) if node.is_group and node.default_command else None
+        if default is None:
+            return False
+        first_short = "-" + flag[1] if not flag.startswith("--") and len(flag) > 2 else None
+        if _find_option(default, flag) is None and (
+            first_short is None or _find_option(default, first_short) is None
+        ):
+            return False
+        self.enter(default)
+        return True
+
     def enter(self, child: Command) -> None:
         self.node = child
         self.ancestors.append(child)
@@ -444,5 +466,10 @@ def _find_option(cmd: Command, flag: str):
     return None
 
 
+# "-s/--short" or "--json/--no-json": option names written as prose.
+_PROSE_OPTION_RE = re.compile(r"^--?[\w-]+/--?[\w-]")
+_PLACEHOLDER_PREFIXES = ("<", "{", "[", "$", "my_", "my-", "your_", "your-")
+
+
 def _is_placeholder(token: str) -> bool:
-    return token.isupper() or token.startswith(("<", "{", "[", "$")) or token in {"...", "…"}
+    return token.isupper() or token.lower().startswith(_PLACEHOLDER_PREFIXES) or token in {"...", "…"}
