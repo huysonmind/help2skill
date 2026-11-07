@@ -16,6 +16,7 @@ from . import (
     SKILL_MAX_CHARS,
     UNNAMED,
     __version__,
+    check_docs,
     check_skill_file,
     find_machine_paths,
     introspect,
@@ -27,6 +28,7 @@ from . import (
 )
 from ._cyclopts import is_cyclopts_app
 from ._plumbum import is_plumbum_app
+from .lint import default_paths
 from .sync import count_command_lines
 
 _STALE_KINDS = ("stale-block", "missing-block", "stale-reference", "missing-reference")
@@ -41,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="help2skill",
         description=(
             "Generate LLM-ready docs and SKILL.md files from Click, Typer, argparse, cyclopts "
-            "and plumbum CLIs."
+            "and plumbum CLIs, and check that the docs match the CLI."
         ),
         epilog="TARGET is the import path of the CLI object, e.g. mypkg.cli:app. For a function "
         "that builds an argparse parser, write mypkg.cli:build_parser() (with parentheses).",
@@ -81,12 +83,41 @@ def build_parser() -> argparse.ArgumentParser:
     chk.add_argument("target", help="CLI object, e.g. mypkg.cli:app")
     chk.add_argument("path", type=Path, help="SKILL.md to check")
     chk.add_argument("--max-chars", type=int, help="Override the value stored in the file")
-    for p in (md, skill, chk):
+
+    lint = sub.add_parser(
+        "lint",
+        help="Exit 1 if command lines in the docs (README, docs/) would be rejected by the CLI.",
+        description="Check every example that runs the CLI in Markdown, MDX and reStructuredText "
+        "files: unknown subcommands, unknown or misplaced options, invalid choices, missing "
+        "arguments. No SKILL.md needed. Directories are searched recursively, skipping changelogs; "
+        "skip one code block or line by writing 'help2skill: ignore' on it or just before it.",
+    )
+    lint.add_argument("target", help="CLI object, e.g. mypkg.cli:app")
+    lint.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        help="Files or directories to check (default: README.* and docs/ in the current directory)",
+    )
+    lint.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Skip files matching this pattern, e.g. 'docs/legacy/*'; repeatable",
+    )
+    lint.add_argument(
+        "--format",
+        choices=["text", "github"],
+        help="github: also print GitHub Actions annotations (default when GITHUB_ACTIONS is set)",
+    )
+    for p in (md, skill, chk, lint):
         p.add_argument(
             "--program",
             help="Program name users type (default: stored in the file, else the console script "
             "that points at TARGET, else the CLI's own name)",
         )
+    for p in (md, skill, chk):
         p.add_argument(
             "--hide-default",
             action="append",
@@ -95,6 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
             help="Leave out the default of this parameter (name or option), e.g. one computed at "
             "run time; repeatable. Stored in the file.",
         )
+    for p in (md, skill, chk, lint):
         p.add_argument(
             "--app-dir",
             metavar="DIR",
@@ -224,7 +256,14 @@ def entry_point_name(spec: str) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args, extra = parser.parse_known_args(argv)
+    # Before Python 3.12, argparse rejects paths written after an option
+    # (``lint TARGET --program x docs``); take them as paths.
+    if extra and args.action == "lint" and not any(e.startswith("-") for e in extra):
+        args.paths += [Path(e) for e in extra]
+    elif extra:
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
     try:
         return _run(args)
     except UsageError as exc:
@@ -244,6 +283,9 @@ def _run(args: argparse.Namespace) -> int:
     if args.action == "check" and args.path.exists():
         stored = read_settings(args.path.read_text(encoding="utf-8")).program
     program = program_name(cli, args.program, stored, entry_point_name(args.target), resolve=resolve)
+
+    if args.action == "lint":
+        return _lint(args, cli, program, resolve)
 
     if args.action == "markdown":
         if program is None:
@@ -301,6 +343,49 @@ def _run(args: argparse.Namespace) -> int:
         lines = f"no hand-written `{prog}` command lines found to check"
     print(f"{args.path}: in sync with {args.target} ({lines})")
     return 0
+
+
+def _lint(args: argparse.Namespace, cli: Any, program: str | None, resolve: Any) -> int:
+    paths = args.paths or default_paths()
+    if not paths:
+        raise UsageError("no README or docs/ here: pass the files or directories to check")
+    if program is None:
+        _warn_unnamed(introspect(cli, resolve=resolve).name)
+    results = check_docs(
+        cli, paths, program=program, resolve=resolve, exclude=args.exclude, scripts=_script_names(args.target)
+    )
+    github = args.format == "github" or (args.format is None and os.environ.get("GITHUB_ACTIONS") == "true")
+    problems = 0
+    for result in results:
+        for problem in result.problems:
+            problems += 1
+            print(f"{result.path}:{problem.line}: {problem.message} [{problem.kind}]")
+            if github:
+                print(
+                    f"::error file={result.path.as_posix()},line={problem.line},"
+                    f"title=help2skill {problem.kind}::{_escape_annotation(problem.message)}"
+                )
+    checked = sum(r.checked for r in results)
+    with_lines = sum(1 for r in results if r.checked)
+    prog = program or introspect(cli, resolve=resolve).name
+    summary = (
+        f"{checked} `{prog}` command line{'s' if checked != 1 else ''} checked in {with_lines} of "
+        f"{len(results)} file{'s' if len(results) != 1 else ''}"
+    )
+    if problems:
+        print(f"help2skill: {problems} problem{'s' if problems != 1 else ''}; {summary}")
+        return 1
+    print(f"help2skill: no problems; {summary}")
+    if not checked:
+        print(
+            f"help2skill: warning: no line runs `{prog}`; if users type another name, pass --program",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _escape_annotation(text: str) -> str:
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
 def _warn_unnamed(name: str) -> None:

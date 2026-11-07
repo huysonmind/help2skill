@@ -1,0 +1,64 @@
+name: help2skill lint
+description: Check that every command line in your README and docs is accepted by your Python CLI (Click, Typer, argparse, cyclopts, plumbum).
+author: huysonmind
+branding:
+  icon: check-square
+  color: green
+
+inputs:
+  target:
+    description: The CLI object to check against, as module:attribute (e.g. mypkg.cli:app, or "mypkg.cli:build_parser()").
+    required: true
+  paths:
+    description: Files or directories to check, separated by spaces. Default README.* and docs/.
+    default: ""
+  program:
+    description: Program name users type, when help2skill cannot find it (e.g. the CLI object is a Typer app).
+    default: ""
+  exclude:
+    description: Glob patterns of files to skip, separated by spaces (e.g. "docs/legacy/*").
+    default: ""
+  app-dir:
+    description: Import the target from this directory (e.g. src) instead of an installed package.
+    default: ""
+  install:
+    description: Command that installs your project so the target can be imported. Set to "" if a previous step already did.
+    default: pip install .
+  python-version:
+    description: Python version to set up. Set to "" to use the Python already on the PATH.
+    default: "3.12"
+  help2skill-version:
+    description: pip requirement for help2skill itself.
+    default: help2skill
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.python-version != ''
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install
+      shell: bash
+      env:
+        INSTALL: ${{ inputs.install }}
+        HELP2SKILL: ${{ inputs.help2skill-version }}
+      run: |
+        if [ -n "$INSTALL" ]; then bash -c "$INSTALL"; fi
+        python -m pip install --quiet "$HELP2SKILL"
+    - name: Check the docs
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        PATHS: ${{ inputs.paths }}
+        PROGRAM: ${{ inputs.program }}
+        EXCLUDE: ${{ inputs.exclude }}
+        APP_DIR: ${{ inputs.app-dir }}
+      run: |
+        read -ra paths <<< "$PATHS"
+        args=(lint "$TARGET" "${paths[@]}" --format github)
+        if [ -n "$PROGRAM" ]; then args+=(--program "$PROGRAM"); fi
+        if [ -n "$APP_DIR" ]; then args+=(--app-dir "$APP_DIR"); fi
+        read -ra excludes <<< "$EXCLUDE"
+        for pattern in "${excludes[@]}"; do args+=(--exclude "$pattern"); done
+        python -m help2skill "${args[@]}"

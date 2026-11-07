@@ -13,6 +13,9 @@
 - **Drift check for CI**: fails when the generated block is stale, or when hand-written
   examples mention a subcommand or option that does not exist (or an option placed at
   the wrong level, e.g. a group option after the subcommand).
+- **Docs lint**: the same check for every example in your README and `docs/`
+  (Markdown, MDX, reStructuredText), no SKILL.md needed. One command, or one line in a
+  GitHub workflow.
 
 No runtime dependencies. Works with Typer ≥ 0.26 (vendored Click), where code that does
 `isinstance(cmd, click.Group)` silently finds nothing.
@@ -156,6 +159,44 @@ Click's documented `LazyGroup` pattern works as is. Placeholder commands with a
 `materialize()` method are loaded automatically; for anything else pass
 `resolve=` (Python API) or `--resolve module:func` (command line).
 
+## Check the examples in your docs
+
+Docs drift too: an option is renamed, a subcommand moves, and the README still shows
+the old command. `lint` parses every command line in your docs against the real CLI:
+
+```console
+$ help2skill lint todo:main README.md docs
+README.md:5: `todo list` has no option `--tag` [unknown-option]
+docs/usage.md:6: `todo list` has no option `--status` [unknown-option]
+docs/usage.md:7: `urgent` is not a valid value for `--priority` in `todo add` (choose from: low, normal, high) [invalid-choice]
+docs/usage.md:8: `todo` has no subcommand `done` [unknown-command]
+help2skill: 4 problems; 5 `todo` command lines checked in 2 of 2 files
+```
+
+On the docs of eight open-source CLIs (2,833 command lines, Markdown, MDX and
+reStructuredText), `lint` reported 24 problems: 7 were real mistakes in the docs; the
+others were plugin commands, removed commands shown on purpose in a migration guide,
+and fragments without their arguments, which is what `help2skill: ignore` is for.
+
+With no paths it checks `README.*` and `docs/`. Code blocks in other languages (Python,
+TOML…) are skipped, console blocks that use a `$ ` prompt are read only on their prompt
+lines, and changelogs are left out unless named. To skip an example on purpose (a
+plugin command, a deliberate mistake), write `help2skill: ignore` on its line or on the
+line before its code block (`<!-- help2skill: ignore -->`, `.. help2skill: ignore`).
+
+In GitHub Actions, problems show up as annotations on the pull request:
+
+```yaml
+- uses: actions/checkout@v7
+- uses: huysonmind/help2skill@v0
+  with:
+    target: mytool.cli:app      # the CLI object
+    # paths: README.md docs     # default: README.* and docs/
+    # install: pip install .   # how to make the target importable (default)
+```
+
+In pytest: `help2skill.testing.assert_docs_in_sync(app, [README, DOCS])`.
+
 ## SKILL.md and drift checks
 
 ```console
@@ -247,13 +288,16 @@ tree = help2skill.introspect(app, "mytool")  # Click, Typer, argparse, cyclopts,
 print(help2skill.render_markdown(tree))
 help2skill.write_skill(app, "SKILL.md", name="mytool")
 problems = help2skill.check_skill_file(app, "SKILL.md")
+for result in help2skill.check_docs(app, ["README.md", "docs"]):
+    print(result.path, result.checked, result.problems)
 ```
 
 ## Security
 
 `help2skill` imports the module you point it at, the same as running your CLI. It calls
 a function only when you write `module:func()` or the function's name contains
-"parser"; it never calls your `main()`. Generated files copy your help text verbatim, so review them
+"parser"; it calls your `main()` only with `--from-main`, and stops it when it parses
+its arguments. Generated files copy your help text verbatim, so review them
 for machine-specific values before committing. See [SECURITY.md](https://github.com/huysonmind/help2skill/blob/main/SECURITY.md).
 
 ## License

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from ._argparse import from_argparse
 from ._click import Resolver, default_resolve, from_click, is_click_command
 from ._cyclopts import from_cyclopts, is_cyclopts_app
 from ._plumbum import from_plumbum, is_plumbum_app
+from .lint import FileResult, default_paths, find_docs, lint_files
 from .model import Command, Param
 from .privacy import find_machine_paths, redact_home
 from .render import (
@@ -33,6 +35,7 @@ from .sync import REFERENCE_FILE, Problem, Settings, check, read_settings, skill
 
 __all__ = [
     "Command",
+    "FileResult",
     "Param",
     "Problem",
     "Settings",
@@ -40,6 +43,7 @@ __all__ = [
     "REFERENCE_FILE",
     "SKILL_MAX_CHARS",
     "check",
+    "check_docs",
     "check_skill_file",
     "default_description",
     "default_resolve",
@@ -56,7 +60,7 @@ __all__ = [
     "write_skill",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 # Names a framework falls back to when the real program name is unknown.
@@ -242,6 +246,29 @@ def check_skill_file(
         else (stored.max_chars if stored.max_chars is not None else SKILL_MAX_CHARS)
     )
     return check(text, cmd, max_chars=limit, reference=reference, scripts=scripts)
+
+
+def check_docs(
+    cli: Any,
+    paths: Iterable[str | Path] | None = None,
+    *,
+    program: str | None = None,
+    resolve: Resolver | None = None,
+    exclude: list[str] | tuple[str, ...] = (),
+    scripts: tuple[str, ...] = (),
+) -> list[FileResult]:
+    """Check every command line in a project's documentation against the CLI.
+
+    ``paths`` are files or directories (default: ``README.*`` and ``docs/`` in
+    the current directory); directories are searched for Markdown, MDX and
+    reStructuredText files, skipping changelogs. No SKILL.md is needed. Returns
+    one :class:`FileResult` per file; a file is fine when its ``problems`` is empty.
+    """
+    files = find_docs(paths if paths is not None else default_paths(), exclude=exclude)
+    if not files:
+        raise FileNotFoundError("no documentation files found (pass README.md, docs/ or other paths)")
+    cmd = introspect(cli, program_name(cli, program, resolve=resolve), resolve=resolve)
+    return lint_files(cmd, files, scripts=scripts)
 
 
 def _skill_name(text: str) -> str | None:

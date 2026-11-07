@@ -19,6 +19,18 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
 
+  action:
+    # The GitHub Action checks help2skill's own README and examples.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./
+        with:
+          target: "help2skill.cli:build_parser()"
+          paths: README.md examples
+          install: ""
+          help2skill-version: .
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

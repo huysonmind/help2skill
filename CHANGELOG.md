@@ -3,7 +3,27 @@
 All notable changes are listed here. The generated Markdown format is part of the
 public interface: any change to it is called out under **Output**.
 
-## Unreleased
+## 0.3.0 (2026-11-08)
+- `help2skill lint TARGET [PATHS…]`: check every command line in a README and `docs/`
+  (Markdown, MDX, reStructuredText) against the CLI, no SKILL.md needed. Changelogs
+  and build directories are skipped; `--exclude GLOB` skips more; `help2skill: ignore`
+  skips one example. With `--format github` (default inside GitHub Actions) problems
+  are printed as annotations.
+- GitHub Action: `uses: huysonmind/help2skill@v0` with `target:` runs `lint` in CI.
+- Python API: `check_docs()`; pytest helper `assert_docs_in_sync()`.
+- Drift check (`check` and `lint`):
+  - code blocks in other languages (`python`, `toml`, `json`…) are no longer read as
+    commands; in `console` blocks that use a `$ ` prompt, output lines are skipped;
+  - `$(command --option)` and `` `command` `` are one value, not options of the CLI;
+  - optional and variadic arguments may be empty wherever they are, so
+    `http example.org` (argparse `METHOD?` before `URL`) and `sqlite-utils memory 'select 1'`
+    (Click `nargs=-1` before `SQL`) are no longer missing an argument;
+  - tokens after `--` count as arguments; after an argparse `REMAINDER` argument or in
+    a Click command with `ignore_unknown_options`, the rest of the line is not checked;
+  - `--version` on the root command is accepted (often handled outside the parser);
+  - a hyphenated word where a group with a default command expects a subcommand
+    (`sqlite-utils hello-world`) is taken as a plugin command, not reported;
+  - `add/remove` in prose is not taken as a subcommand.
 
 ## 0.2.0 (2026-11-07)
 - cyclopts (`App`, 3.0 to 5.x) and plumbum (`cli.Application` subclasses, 1.8+) CLIs:

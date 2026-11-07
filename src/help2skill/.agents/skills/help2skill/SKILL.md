@@ -6,7 +6,7 @@ description: "Use help2skill to give a Python CLI (Click, Typer, argparse, cyclo
 <!-- help2skill:begin program=help2skill max-chars=30000 (generated from the CLI; edit outside this block) -->
 ## `help2skill [OPTIONS] COMMAND [ARGS]...`
 
-Generate LLM-ready docs and SKILL.md files from Click, Typer, argparse, cyclopts and plumbum CLIs.
+Generate LLM-ready docs and SKILL.md files from Click, Typer, argparse, cyclopts and plumbum CLIs, and check that the docs match the CLI.
 
 TARGET is the import path of the CLI object, e.g. mypkg.cli:app. For a function that builds an argparse parser, write mypkg.cli:build_parser() (with parentheses).
 
@@ -17,6 +17,7 @@ Commands (all levels):
 - `help2skill markdown`: Print the Markdown reference for a CLI.
 - `help2skill skill`: Create a SKILL.md, or refresh its generated block.
 - `help2skill check`: Exit 1 if a SKILL.md has drifted from the CLI.
+- `help2skill lint`: Exit 1 if command lines in the docs (README, docs/) would be rejected by the CLI.
 
 Shared options (listed by name in the commands that accept them):
 - `--program TEXT`: Program name users type (default: stored in the file, else the console script that points at TARGET, else the CLI's own name)
@@ -61,6 +62,19 @@ Arguments:
 Options:
 - `--max-chars INT`: Override the value stored in the file
 - Shared options: `--program`, `--hide-default`, `--app-dir`, `--resolve`, `--from-main`
+
+### `help2skill lint [OPTIONS] TARGET [PATHS...]`
+
+Check every example that runs the CLI in Markdown, MDX and reStructuredText files: unknown subcommands, unknown or misplaced options, invalid choices, missing arguments. No SKILL.md needed. Directories are searched recursively, skipping changelogs; skip one code block or line by writing 'help2skill: ignore' on it or just before it.
+
+Arguments:
+- `TARGET` (text; required): CLI object, e.g. mypkg.cli:app
+- `[PATHS...]` (path): Files or directories to check (default: README.* and docs/ in the current directory)
+
+Options:
+- `--exclude GLOB` (repeatable): Skip files matching this pattern, e.g. 'docs/legacy/*'; repeatable
+- `--format [text|github]`: github: also print GitHub Actions annotations (default when GITHUB_ACTIONS is set)
+- Shared options: `--program`, `--app-dir`, `--resolve`, `--from-main`
 <!-- help2skill:end -->
 
 ## How to use it
@@ -111,3 +125,16 @@ help2skill check mypkg.cli:app src/mypkg/.agents/skills/mytool/SKILL.md
   active.
 
 In tests, `help2skill.testing.assert_skill_in_sync(app, path)` runs the same check.
+
+### Check the README and docs (no SKILL.md needed)
+
+```console
+help2skill lint mypkg.cli:app README.md docs
+```
+
+Every example that runs the CLI in Markdown, MDX or reStructuredText files is checked
+the same way. Changelogs are skipped. Fix the example, not the CLI. For an example that
+is wrong on purpose or runs a plugin command, write `help2skill: ignore` on that line or
+on the line just before its code block (`<!-- help2skill: ignore -->` in Markdown,
+`.. help2skill: ignore` in reStructuredText). In tests:
+`help2skill.testing.assert_docs_in_sync(app, [README, DOCS])`.
