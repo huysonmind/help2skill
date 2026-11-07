@@ -53,7 +53,7 @@ __all__ = [
     "write_skill",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 # Names a framework falls back to when the real program name is unknown.

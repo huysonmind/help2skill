@@ -4,6 +4,8 @@ All notable changes are listed here. The generated Markdown format is part of th
 public interface: any change to it is called out under **Output**.
 
 ## Unreleased
+
+## 0.1.1 (2026-11-07)
 - Fixed: the order of "Shared options" depended on Python's hash seed, so
   `help2skill check` could report a fresh file as stale (**Output**: the order is now
   the order options first appear).
