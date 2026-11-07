@@ -11,6 +11,12 @@ public interface: any change to it is called out under **Output**.
   `--resolve` when they were given.
 - Machine-path warning also catches paths inside the running environment, the temp
   directory, and paths containing the user name.
+- Drift check: options written before the implicit default command of a group
+  (`llm --system x`, `datasette --root`) are checked against that command instead of
+  being reported. On the docs of llm and datasette this removed 239 of 241 and 36 of
+  38 reports, all false.
+- Drift check skips option names written as prose (`-s/--short`) and treats `my_…`,
+  `your-…` tokens as placeholders.
 - help2skill ships its own `SKILL.md` (`.agents/skills/help2skill/`).
 - `examples/`: a Typer app, sqlite-utils and pipx; README demo and pre-commit recipe.
 

@@ -98,3 +98,19 @@ def test_default_command_group():
     tree.default_command = "add"
     assert check_references("`notes groceries --tag home`", tree) == []
     assert [p.kind for p in check_references("`notes groceries --nope`", tree)] == ["unknown-option"]
+
+
+def test_default_command_takes_options_before_arguments():
+    # click-default-group passes options the group does not know to the default command.
+    tree = help2skill.introspect(notes, "notes")
+    tree.default_command = "add"
+    assert check_references("`notes --tag home groceries`", tree) == []
+    problems = check_references("`notes --nope groceries`", tree)
+    assert [p.kind for p in problems] == ["unknown-option"]
+
+
+def test_prose_option_names_and_placeholders_are_skipped():
+    tree = help2skill.introspect(notes, "notes")
+    assert check_references("Use `notes add -t/--tag` to tag a note.", tree) == []
+    assert check_references("`notes my_command --x`", tree) == []
+    assert check_references("`notes your-plugin`", tree) == []
