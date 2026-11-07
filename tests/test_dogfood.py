@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -39,27 +40,32 @@ def test_regenerate_hint_is_shell_quoted(tmp_path: Path, capsys) -> None:
     stale.write_text(SKILL.read_text().replace("Print the Markdown reference", "Old text", 1))
     assert main(["check", TARGET, str(stale), "--app-dir", "src"]) == 1
     err = capsys.readouterr().err
-    assert f"help2skill skill '{TARGET}' -o {stale} --app-dir src" in err
+    expected = shlex.join(["help2skill", "skill", TARGET, "-o", str(stale), "--app-dir", "src"])
+    assert expected in err
 
 
 def test_find_machine_paths_flags_environment_temp_and_user_paths(monkeypatch) -> None:
-    import sys
-    import tempfile
-
     from help2skill import privacy
 
     monkeypatch.setattr(privacy, "_user_name", lambda: "alice")
-    venv_python = f"{sys.prefix}/bin/python"
-    temp_file = f"{tempfile.gettempdir()}/build-1/out.txt"
+    monkeypatch.setattr(privacy, "_machine_prefixes", lambda: ["/opt/venvs/proj", "/var/folders/ab/T"])
     text = (
-        f"default: {venv_python}. Cache in {temp_file}, logs in /var/folders/x/-Users-alice-proj/log; "
-        "manuals in /usr/local/share/man, not /srv/malice/x"
+        "default: /opt/venvs/proj/bin/python. Cache in /var/folders/ab/T/build-1/out.txt, "
+        "logs in /data/-Users-alice-proj/log; manuals in /usr/local/share/man, not /srv/malice/x "
+        "or /opt/venvs/project"
     )
-    found = privacy.find_machine_paths(text)
-    assert venv_python in found
-    assert temp_file in found
-    assert "/var/folders/x/-Users-alice-proj/log" in found
-    assert not any(p.startswith(("/usr/local", "/srv")) for p in found)
+    assert privacy.find_machine_paths(text) == [
+        "/data/-Users-alice-proj/log",
+        "/opt/venvs/proj/bin/python",
+        "/var/folders/ab/T/build-1/out.txt",
+    ]
+
+
+def test_machine_prefixes_skip_shallow_roots(monkeypatch) -> None:
+    from help2skill import privacy
+
+    monkeypatch.setattr(privacy.tempfile, "gettempdir", lambda: "/tmp")
+    assert "/tmp" not in privacy._machine_prefixes()
 
 
 def test_todo_example_in_sync(monkeypatch) -> None:

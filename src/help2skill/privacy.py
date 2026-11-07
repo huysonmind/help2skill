@@ -40,9 +40,13 @@ def _machine_prefixes() -> list[str]:
     for path in (sys.prefix, tempfile.gettempdir()):
         for variant in (path, os.path.realpath(path)):
             variant = variant.rstrip("/\\")
-            if variant.count(os.sep) >= 2:  # skip "/" and "/tmp"-like roots
+            if variant.count("/") + variant.count("\\") >= 2:  # skip "/" and "/tmp"-like roots
                 found.add(variant)
     return sorted(found, key=len, reverse=True)
+
+
+def _under(path: str, prefix: str) -> bool:
+    return path == prefix or (path.startswith(prefix) and path[len(prefix)] in "/\\")
 
 
 def _user_name() -> str | None:
@@ -65,8 +69,6 @@ def find_machine_paths(text: str) -> list[str]:
     user_re = re.compile(rf"(?<![A-Za-z0-9]){re.escape(user)}(?![A-Za-z0-9])") if user else None
     for path in _ABS_PATH_RE.findall(text):
         path = path.rstrip(".,;:)")
-        if any(path == p or path.startswith(p + os.sep) for p in prefixes) or (
-            user_re and user_re.search(path)
-        ):
+        if any(_under(path, p) for p in prefixes) or (user_re and user_re.search(path)):
             found.add(path)
     return sorted(found)
