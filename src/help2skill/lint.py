@@ -67,7 +67,9 @@ def find_docs(paths: Iterable[str | Path], *, exclude: Iterable[str] = ()) -> li
                 if not name.lower().endswith(DOC_SUFFIXES) or _CHANGELOG_RE.match(name):
                     continue
                 found.add(Path(root) / name)
-    return sorted(p for p in found if not _excluded(p, patterns))
+    # Sort by the POSIX string so the order is the same on every OS
+    # (Windows paths compare case-insensitively).
+    return sorted((p for p in found if not _excluded(p, patterns)), key=lambda p: p.as_posix())
 
 
 def default_paths(directory: str | Path = ".") -> list[Path]:

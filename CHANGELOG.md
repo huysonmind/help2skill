@@ -3,7 +3,7 @@
 All notable changes are listed here. The generated Markdown format is part of the
 public interface: any change to it is called out under **Output**.
 
-## Unreleased
+## 0.3.0 (2026-11-08)
 - `help2skill lint TARGET [PATHS…]`: check every command line in a README and `docs/`
   (Markdown, MDX, reStructuredText) against the CLI, no SKILL.md needed. Changelogs
   and build directories are skipped; `--exclude GLOB` skips more; `help2skill: ignore`
