@@ -6,6 +6,7 @@ import argparse
 import difflib
 import importlib
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -235,7 +236,7 @@ def _run(args: argparse.Namespace) -> int:
     for problem in problems:
         print(f"{args.path}: {problem}", file=sys.stderr)
     if any(p.kind in _STALE_KINDS for p in problems):
-        print(f"help2skill: regenerate with: help2skill skill {args.target} -o {args.path}", file=sys.stderr)
+        print(f"help2skill: regenerate with: {_regenerate_command(args)}", file=sys.stderr)
     if problems:
         return 1
     print(f"{args.path}: in sync with {args.target}")
@@ -262,3 +263,13 @@ def _warn_machine_paths(text: str, where: str) -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
+
+
+def _regenerate_command(args: argparse.Namespace) -> str:
+    """The ``help2skill skill`` command that refreshes the checked file, ready to paste."""
+    parts = ["help2skill", "skill", args.target, "-o", str(args.path)]
+    if args.app_dir:
+        parts += ["--app-dir", str(args.app_dir)]
+    if args.resolve:
+        parts += ["--resolve", args.resolve]
+    return shlex.join(parts)

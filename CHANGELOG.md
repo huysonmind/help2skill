@@ -4,6 +4,15 @@ All notable changes are listed here. The generated Markdown format is part of th
 public interface: any change to it is called out under **Output**.
 
 ## Unreleased
+- Fixed: the order of "Shared options" depended on Python's hash seed, so
+  `help2skill check` could report a fresh file as stale (**Output**: the order is now
+  the order options first appear).
+- `check` prints the regenerate command shell-quoted, with `--app-dir` and
+  `--resolve` when they were given.
+- Machine-path warning also catches paths inside the running environment, the temp
+  directory, and paths containing the user name.
+- help2skill ships its own `SKILL.md` (`.agents/skills/help2skill/`).
+- `examples/`: a Typer app, sqlite-utils and pipx; README demo and pre-commit recipe.
 
 ## 0.1.0 (2026-11-07)
 - Introspect Click, Typer (including Typer ≥ 0.26 with vendored Click) and argparse

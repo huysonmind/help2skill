@@ -58,7 +58,7 @@ SHARED_MIN_CHARS = 60
 def _shared_options(cmd: Command) -> list[str]:
     counts: dict[str, int] = {}
     for node in cmd.walk():
-        for line in {_param_line(p) for p in node.options}:
+        for line in dict.fromkeys(_param_line(p) for p in node.options):
             counts[line] = counts.get(line, 0) + 1
     return [line for line, n in counts.items() if n >= SHARED_MIN_COMMANDS and len(line) >= SHARED_MIN_CHARS]
 

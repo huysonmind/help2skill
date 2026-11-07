@@ -17,6 +17,38 @@
 No runtime dependencies. Works with Typer ≥ 0.26 (vendored Click), where code that does
 `isinstance(cmd, click.Group)` silently finds nothing.
 
+## What it looks like
+
+```console
+$ todo --llms
+# `todo COMMAND [ARGS]...`
+
+Keep a to-do list in a local file.
+
+Commands (all levels):
+- `todo add`: Add a task.
+- `todo finish`: Mark a task as done.
+- `todo list`: List tasks.
+- `todo tag rename`: Rename a tag on every task.
+
+## `todo add [OPTIONS] TEXT`
+...
+- `--priority [low|normal|high]` (default: normal)
+- `-t, --tag TEXT` (repeatable): Tag to attach.
+...
+```
+
+When a hand-written example drifts from the CLI, CI says so:
+
+```console
+$ help2skill check todo:main SKILL.md
+SKILL.md: line 11: `todo list` has no option `--status` [unknown-option]
+SKILL.md: line 12: `todo` has no subcommand `done` [unknown-command]
+```
+
+More in [`examples/`](https://github.com/huysonmind/help2skill/tree/main/examples):
+a Typer app, sqlite-utils (48 commands) and pipx (argparse).
+
 ## Quick start
 
 ### Click
@@ -111,6 +143,9 @@ $ help2skill check mytool.cli:app src/mytool/.agents/skills/mytool/SKILL.md
 `<!-- help2skill:begin … -->` and `<!-- help2skill:end -->` if it already exists
 (`--name` is then optional). Write your own guidance above or below the block.
 
+help2skill ships its own skill, made with itself:
+[`src/help2skill/.agents/skills/help2skill/SKILL.md`](https://github.com/huysonmind/help2skill/blob/main/src/help2skill/.agents/skills/help2skill/SKILL.md).
+
 **Program name.** Commands are written with the name users type. help2skill uses
 `--program` if given, else the installed console script that points at the target,
 else the CLI's own name (`@click.group(name="mytool")`, `ArgumentParser(prog="mytool")`),
@@ -160,6 +195,19 @@ def test_skill_in_sync():
 ```
 
 With a `src/` layout that is not installed, pass `--app-dir src` to the command line.
+
+As a [pre-commit](https://pre-commit.com) hook (runs in your project's environment):
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: help2skill-check
+        name: SKILL.md in sync with the CLI
+        entry: uv run help2skill check mytool.cli:app src/mytool/.agents/skills/mytool/SKILL.md
+        language: system
+        pass_filenames: false
+```
 
 ## Python API
 
