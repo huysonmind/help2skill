@@ -203,10 +203,8 @@ def test_cyclopts_meta_app_options_and_lazy_commands(tmp_path, monkeypatch):
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     app = cyclopts.App(name="pf")
-    try:
-        app.command("lazy_cmds:sub", name="flow")
-    except TypeError:
-        pytest.skip("this cyclopts has no lazy commands")
+    pytest.importorskip("cyclopts.command_spec", reason="lazy commands need cyclopts >= 4")
+    app.command("lazy_cmds:sub", name="flow")
 
     @app.meta.default
     def meta(
