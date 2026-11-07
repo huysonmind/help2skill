@@ -4,6 +4,8 @@ All notable changes are listed here. The generated Markdown format is part of th
 public interface: any change to it is called out under **Output**.
 
 ## Unreleased
+
+## 0.2.0 (2026-11-07)
 - cyclopts (`App`, 3.0 to 5.x) and plumbum (`cli.Application` subclasses, 1.8+) CLIs:
   `markdown`, `skill`, `check` and `introspect`. Lazy commands
   (`app.command("pkg.mod:app")`) are imported, meta-app options (`app.meta`) are
