@@ -1,0 +1,17 @@
+llm_help_haiku.json: 8/8
+llm_help_sonnet.json: 7/8
+    1: does not start with the program name
+llm_memory_haiku.json: 6/8
+    1: wrong command `aliases set`
+    7: rejected by the CLI: No such option '--multi'. Did you mean '--schema-multi'?
+llm_memory_sonnet.json: 7/8
+    1: does not start with the program name
+llm_skill_haiku.json: 8/8
+llm_skill_sonnet.json: 8/8
+sqlite_help_haiku.json: 8/8
+sqlite_help_sonnet.json: 8/8
+sqlite_memory_haiku.json: 7/8
+    7: rejected by the CLI: No such option '--code'.
+sqlite_memory_sonnet.json: 8/8
+sqlite_skill_haiku.json: 8/8
+sqlite_skill_sonnet.json: 8/8

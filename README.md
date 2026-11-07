@@ -49,6 +49,14 @@ SKILL.md: line 12: `todo` has no subcommand `done` [unknown-command]
 More in [`examples/`](https://github.com/huysonmind/help2skill/tree/main/examples):
 a Typer app, sqlite-utils (48 commands) and pipx (argparse).
 
+## Does it help?
+
+In a [small experiment](https://github.com/huysonmind/help2skill/tree/main/evals/agent_commands)
+(16 tasks on llm and sqlite-utils, Claude Sonnet and Haiku), agents given the generated
+SKILL.md wrote 32/32 correct commands with no `--help` calls. Exploring with `--help`
+got 31/32 with 65 calls; answering from memory got 28/32. One run per cell, so treat it
+as a first signal.
+
 ## Quick start
 
 ### Click

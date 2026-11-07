@@ -1,0 +1,10 @@
+{
+  "1": "llm aliases set qwen qwen3-32b",
+  "2": "llm logs -m gpt-4o-mini -n 5 --json -u",
+  "3": "llm embed-multi docs --files ./docs '**/*.md' --store",
+  "4": "llm similar docs -c \"rate limits\" -n 3 -p",
+  "5": "llm models options set gpt-4o temperature 0.2",
+  "6": "llm -f notes.txt -s \"Be brief\" --no-log -u \"summarize this\"",
+  "7": "llm schema \"name, age int\" --multi",
+  "8": "llm fragments set readme README.md"
+}

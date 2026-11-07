@@ -1,0 +1,10 @@
+{
+  "1": "llm openai endpoint add http://localhost:8000/v1 -m qwen3-32b --alias qwen --key local --supports-tools",
+  "2": "llm logs list -m gpt-4o-mini -n 5 --json -u",
+  "3": "llm embed-multi docs --files ./docs '**/*.md' --store",
+  "4": "llm similar docs -c \"rate limits\" -n 3 -p",
+  "5": "llm models options set gpt-4o temperature 0.2",
+  "6": "llm prompt -s \"Be brief\" -f notes.txt -n -u \"summarize this\"",
+  "7": "llm schemas dsl \"name, age int\" --multi",
+  "8": "llm fragments set readme README.md"
+}

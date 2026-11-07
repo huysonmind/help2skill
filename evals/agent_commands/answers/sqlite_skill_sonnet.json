@@ -1,0 +1,10 @@
+{
+"1": "sqlite-utils insert data.db people people.csv --csv --pk id --replace --no-detect-types",
+"2": "sqlite-utils transform data.db orders --rename amt amount --type amount FLOAT --drop tmp --sql",
+"3": "sqlite-utils extract data.db places country region --table locations --fk-column location_id",
+"4": "sqlite-utils enable-fts data.db articles title body --fts5 --tokenize porter --create-triggers",
+"5": "sqlite-utils rows data.db events --where 'status = :s' -p s failed -c id -c created -o 'created desc' --limit 10 -t",
+"6": "sqlite-utils memory a.csv b.csv 'select * from a join b on a.id = b.id' --save out.db",
+"7": "sqlite-utils convert data.db posts title 'value.upper()' --output title_upper --dry-run",
+"8": "sqlite-utils create-index data.db users email --name idx_users_email --unique --if-not-exists"
+}
