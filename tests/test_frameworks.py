@@ -190,3 +190,31 @@ def test_plumbum_target_loads_from_the_command_line(tmp_path, monkeypatch, capsy
     monkeypatch.chdir(tmp_path)
     assert main(["markdown", "geet_app:Geet"]) == 0
     assert "# `geet NAME`" in capsys.readouterr().out
+
+
+def test_cyclopts_meta_app_options_and_lazy_commands(tmp_path, monkeypatch):
+    cyclopts = pytest.importorskip("cyclopts")
+    (tmp_path / "lazy_cmds.py").write_text(
+        "import cyclopts\n\n"
+        "sub = cyclopts.App(name='flow', help='Manage flows.')\n\n"
+        "@sub.command\n"
+        "def ls(limit: int = 10):\n"
+        "    '''List flows.'''\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    app = cyclopts.App(name="pf")
+    try:
+        app.command("lazy_cmds:sub", name="flow")
+    except TypeError:
+        pytest.skip("this cyclopts has no lazy commands")
+
+    @app.meta.default
+    def meta(
+        *tokens: Annotated[str, cyclopts.Parameter(show=False, allow_leading_hyphen=True)], profile: str = ""
+    ):
+        app(tokens)
+
+    tree = help2skill.introspect(app)
+    assert [o.opts for o in tree.options] == [["--profile"]]
+    assert [c.path for c in tree.walk()] == [["pf"], ["pf", "flow"], ["pf", "flow", "ls"]]
+    assert check_references("`pf --profile dev flow ls --limit 3`", tree) == []

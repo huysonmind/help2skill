@@ -242,6 +242,7 @@ class _Walker:
         self.problems: list[Problem] = []
         self.positional = 0
         self.given = 0  # positional tokens given to the current command
+        self.by_name: set[str] = set()  # arguments given as ``--name VALUE``
         # Report missing arguments only for whole command lines that were read to the end.
         self.complete = complete
 
@@ -275,7 +276,8 @@ class _Walker:
         node = self.node
         if node.is_group:
             return
-        missing = [a for a in node.arguments[self.given :] if a.required]
+        positional = [a for a in node.arguments if a.name not in self.by_name]
+        missing = [a for a in positional[self.given :] if a.required]
         if missing:
             names = ", ".join(f"`{a.name.upper()}`" for a in missing)
             self.report("missing-argument", f"`{_path(node)}` needs {names}")
@@ -302,6 +304,8 @@ class _Walker:
             if has_value:
                 self.report("flag-value", f"`{flag}` is a flag and takes no value")
             return i + 1
+        if not param.is_option:
+            self.by_name.add(param.name)
         if has_value:
             self.check_choice(param, value)
             return i + 1
@@ -450,6 +454,7 @@ class _Walker:
         self.ancestors.append(child)
         self.positional = 0
         self.given = 0
+        self.by_name = set()
 
 
 def _path(cmd: Command) -> str:
@@ -533,6 +538,10 @@ def _skip_options(tokens: list[str], i: int) -> int:
 def _find_option(cmd: Command, flag: str):
     for p in cmd.options:
         if flag in p.opts or flag in p.secondary_opts:
+            return p
+    # Arguments that may also be written as options (cyclopts: ``--name VALUE``).
+    for p in cmd.arguments:
+        if flag in p.secondary_opts:
             return p
     return None
 

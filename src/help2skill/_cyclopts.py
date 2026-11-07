@@ -36,7 +36,7 @@ def _build(app: Any, name: str, path: list[str]) -> Command:
     for cmd_name, sub in app._commands.items():
         if cmd_name in _META_NAMES:
             continue
-        sub = _resolve(sub)
+        sub = _resolve(sub, app)
         if sub is None:
             continue
         by_id.setdefault(id(sub), []).append(cmd_name)
@@ -59,21 +59,21 @@ def _build(app: Any, name: str, path: list[str]) -> Command:
         path=path,
         help=help_text,
         short_help=short_help,
-        params=_params(app),
+        params=_params(app) + _meta_params(app),
         subcommands=subcommands,
         hidden_subcommands=sorted(hidden),
     )
 
 
-def _resolve(sub: Any) -> Any:
-    """Lazy commands (``CommandSpec``) are resolved to their App."""
+def _resolve(sub: Any, parent: Any) -> Any:
+    """Lazy commands (``CommandSpec``, e.g. ``app.command("pkg.mod:func")``) are imported."""
     if hasattr(sub, "_commands"):
         return sub
-    for attr in ("resolve", "load"):
-        method = getattr(sub, attr, None)
-        if callable(method):
+    resolve = getattr(sub, "resolve", None)
+    if callable(resolve):
+        for args in ((parent,), ()):
             try:
-                resolved = method()
+                resolved = resolve(*args)
             except TypeError:
                 continue
             if hasattr(resolved, "_commands"):
@@ -114,6 +114,15 @@ def _params(app: Any) -> list[Param]:
     return params
 
 
+def _meta_params(app: Any) -> list[Param]:
+    """Options of the meta app (``app.meta``), which wraps the app: global options.
+
+    Read ``_meta`` rather than ``meta``, which would create an empty meta app.
+    """
+    meta = getattr(app, "_meta", None)
+    return _params(meta) if meta is not None and hasattr(meta, "_commands") else []
+
+
 def _param(arg: Any) -> Param | None:
     kind = arg.field_info.kind
     positional = kind in (
@@ -137,7 +146,8 @@ def _param(arg: Any) -> Param | None:
         name=name,
         kind="argument" if positional else "option",
         opts=[name] if positional else sorted(names, key=len),
-        secondary_opts=negatives if is_flag else [],
+        # A positional-or-keyword argument can also be given as ``--name VALUE``.
+        secondary_opts=negatives if is_flag else (sorted(names, key=len) if positional else []),
         type="bool" if is_flag else _type_name(hint),
         choices=_choices(hint),
         required=bool(arg.required),
