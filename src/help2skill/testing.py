@@ -17,6 +17,7 @@ def assert_skill_in_sync(
     max_chars: int | None = None,
     resolve: Resolver | None = None,
     hide_defaults: list[str] | None = None,
+    scripts: tuple[str, ...] = (),
 ) -> None:
     """Raise ``AssertionError`` listing every drift problem.
 
@@ -24,7 +25,13 @@ def assert_skill_in_sync(
     Build ``path`` from ``__file__`` so the test passes from any directory.
     """
     problems = check_skill_file(
-        cli, path, program=program, max_chars=max_chars, resolve=resolve, hide_defaults=hide_defaults
+        cli,
+        path,
+        program=program,
+        max_chars=max_chars,
+        resolve=resolve,
+        hide_defaults=hide_defaults,
+        scripts=scripts,
     )
     if problems:
         details = "\n".join(f"- {p}" for p in problems)

@@ -130,10 +130,12 @@ def check(
     *,
     max_chars: int = SKILL_MAX_CHARS,
     reference: str | None = None,
+    scripts: tuple[str, ...] = (),
 ) -> list[Problem]:
     """Return every drift problem between ``text`` (a SKILL.md) and ``cmd``.
 
     ``reference`` is the content of ``references/commands.md`` if it exists.
+    ``scripts`` are file names that also run the CLI (``python tool.py …``).
     """
     problems: list[Problem] = []
     current = extract_block(text)
@@ -162,7 +164,7 @@ def check(
     elif expected_reference is not None and reference is not None:
         if reference.strip() != expected_reference.strip():
             problems.append(Problem("stale-reference", f"{REFERENCE_FILE} is out of date"))
-    problems.extend(check_references(_without_block(text), cmd))
+    problems.extend(check_references(_without_block(text), cmd, scripts=scripts))
     return problems
 
 
@@ -173,11 +175,18 @@ def _without_defaults(text: str) -> str:
     return _DEFAULT_NOTE_RE.sub("default", text).strip()
 
 
-def check_references(text: str, cmd: Command) -> list[Problem]:
-    """Check command lines in code spans and fenced blocks of hand-written text."""
+def check_references(text: str, cmd: Command, *, scripts: tuple[str, ...] = ()) -> list[Problem]:
+    """Check command lines in code spans and fenced blocks of hand-written text.
+
+    Lines may run the CLI by its name, through a launcher (``uv run``,
+    ``python -m``), or as a script: ``python path/NAME.py`` or ``./NAME.py``,
+    where NAME is the program name or one of ``scripts``. Missing required
+    arguments are reported only for lines in fenced blocks, since a code span in
+    prose often names a command without its arguments.
+    """
     problems = []
-    for lineno, snippet in _snippets(text):
-        problems.extend(_check_invocation(snippet, cmd, lineno))
+    for lineno, snippet, in_fence in _snippets(text):
+        problems.extend(_check_invocation(snippet, cmd, lineno, complete=in_fence, scripts=scripts))
     return problems
 
 
@@ -193,7 +202,7 @@ def _snippets(text: str):
         if _FENCE_RE.match(line.strip()):
             in_fence = not in_fence
             if pending:
-                yield pending
+                yield (*pending, True)
                 pending = None
             continue
         if in_fence:
@@ -203,52 +212,73 @@ def _snippets(text: str):
             if line.rstrip().endswith("\\"):
                 pending = (lineno, line.rstrip()[:-1])
                 continue
-            yield lineno, line
+            yield lineno, line, True
         else:
             for match in _CODE_SPAN_RE.finditer(line):
-                yield lineno, match.group(1)
+                yield lineno, match.group(1), False
 
 
-def _check_invocation(snippet: str, root: Command, lineno: int) -> list[Problem]:
+def _check_invocation(
+    snippet: str, root: Command, lineno: int, *, complete: bool = False, scripts: tuple[str, ...] = ()
+) -> list[Problem]:
     snippet = snippet.strip().removeprefix("$ ")
     try:
         tokens = shlex.split(snippet, comments=True)
     except ValueError:
         return []
-    tokens = _strip_launchers(tokens, root.name)
+    tokens = _strip_launchers(_join_placeholders(tokens), root.name, scripts)
     if not tokens:
         return []
-    return _Walker(root, lineno).run(tokens[1:])
+    return _Walker(root, lineno, complete=complete).run(tokens[1:])
 
 
 class _Walker:
     """Follow one command line through the command tree, the way the parser would."""
 
-    def __init__(self, root: Command, lineno: int) -> None:
+    def __init__(self, root: Command, lineno: int, *, complete: bool = False) -> None:
         self.node = root
         self.ancestors = [root]
         self.lineno = lineno
         self.problems: list[Problem] = []
         self.positional = 0
+        self.given = 0  # positional tokens given to the current command
+        # Report missing arguments only for whole command lines that were read to the end.
+        self.complete = complete
 
     def report(self, kind: str, message: str) -> None:
         self.problems.append(Problem(kind, message, self.lineno))
 
     def run(self, tokens: list[str]) -> list[Problem]:
         i = 0
+        finished = True
         while i < len(tokens):
             token = tokens[i]
             if token in _STOP_TOKENS:
                 break
+            if token in _ALWAYS_OK:
+                self.complete = False  # --help needs no arguments
             if _PROSE_OPTION_RE.match(token):
-                break  # "-s/--short" names an option in prose; it is not a command line
+                finished = False  # "-s/--short" names an option in prose; it is not a command line
+                break
             if token.startswith("-") and token != "-":
                 i = self.option(tokens, i)
                 continue
             if not self.positional_token(token):
+                finished = False
                 break
             i += 1
+        if finished and self.complete and not self.problems:
+            self.check_missing_arguments()
         return self.problems
+
+    def check_missing_arguments(self) -> None:
+        node = self.node
+        if node.is_group:
+            return
+        missing = [a for a in node.arguments[self.given :] if a.required]
+        if missing:
+            names = ", ".join(f"`{a.name.upper()}`" for a in missing)
+            self.report("missing-argument", f"`{_path(node)}` needs {names}")
 
     # -- options ---------------------------------------------------------------
     def option(self, tokens: list[str], i: int) -> int:
@@ -383,7 +413,13 @@ class _Walker:
             )
             return False
         # Leaf command: check the value against the matching argument's choices.
+        if _is_placeholder(token):
+            self.given += 1
+            if self.positional < len(node.arguments) and not node.arguments[self.positional].multiple:
+                self.positional += 1
+            return True
         args = node.arguments
+        self.given += 1
         if self.positional < len(args):
             arg = args[self.positional]
             self.check_choice(arg, token)
@@ -413,6 +449,7 @@ class _Walker:
         self.node = child
         self.ancestors.append(child)
         self.positional = 0
+        self.given = 0
 
 
 def _path(cmd: Command) -> str:
@@ -424,7 +461,7 @@ def _did_you_mean(word: str, candidates: list[str]) -> str:
     return f"; did you mean `{close[0]}`?" if close else ""
 
 
-def _strip_launchers(tokens: list[str], root_name: str) -> list[str]:
+def _strip_launchers(tokens: list[str], root_name: str, scripts: tuple[str, ...] = ()) -> list[str]:
     """Drop ``VAR=x``, ``uv run …``, ``python -m mod`` etc. so the CLI name comes first.
 
     Returns an empty list when the line does not invoke ``root_name``.
@@ -434,6 +471,16 @@ def _strip_launchers(tokens: list[str], root_name: str) -> list[str]:
         token = tokens[i]
         if token == root_name:
             return tokens[i:]
+        if _is_script(token, root_name, scripts):
+            return [root_name, *tokens[i + 1 :]]
+        if re.fullmatch(r"python(\d+(\.\d+)?)?", token) and i + 1 < len(tokens) and tokens[i + 1] != "-m":
+            j = i + 1
+            while j < len(tokens) and tokens[j].startswith("-") and tokens[j] != "-m":
+                j += 2 if tokens[j] in ("-X", "-W") else 1
+            if j < len(tokens) and tokens[j] != "-m":
+                if _is_script(tokens[j], root_name, scripts):
+                    return [root_name, *tokens[j + 1 :]]
+                return []
         if _ENV_ASSIGN_RE.match(token):
             i += 1
         elif token == "uv" and tokens[i + 1 : i + 3] == ["tool", "run"]:
@@ -450,6 +497,30 @@ def _strip_launchers(tokens: list[str], root_name: str) -> list[str]:
         else:
             return []
     return []
+
+
+def _join_placeholders(tokens: list[str]) -> list[str]:
+    """``<thư mục đợt>`` is one placeholder even though the shell splits it."""
+    joined: list[str] = []
+    open_at: int | None = None
+    for token in tokens:
+        if open_at is not None:
+            joined[open_at] += " " + token
+            if token.endswith(">"):
+                open_at = None
+            continue
+        joined.append(token)
+        if token.startswith("<") and not token.endswith(">"):
+            open_at = len(joined) - 1
+    return joined
+
+
+def _is_script(token: str, root_name: str, scripts: tuple[str, ...]) -> bool:
+    """``tool.py``, ``./tool``, ``scripts/tool.py``: a file that runs the CLI."""
+    if "/" not in token and "\\" not in token and not token.endswith(".py"):
+        return False
+    name = re.split(r"[/\\]", token)[-1]
+    return name in scripts or name in (root_name, f"{root_name}.py")
 
 
 def _skip_options(tokens: list[str], i: int) -> int:
@@ -472,4 +543,9 @@ _PLACEHOLDER_PREFIXES = ("<", "{", "[", "$", "my_", "my-", "your_", "your-")
 
 
 def _is_placeholder(token: str) -> bool:
-    return token.isupper() or token.lower().startswith(_PLACEHOLDER_PREFIXES) or token in {"...", "…"}
+    return (
+        token.isupper()
+        or token.lower().startswith(_PLACEHOLDER_PREFIXES)
+        or token in {"...", "…"}
+        or "|" in token  # "a|b|c": a choice written out in prose
+    )

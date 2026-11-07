@@ -8,12 +8,15 @@ that documentation and the real CLI in CI.
 from __future__ import annotations
 
 import argparse
+import inspect
 import re
 from pathlib import Path
 from typing import Any
 
 from ._argparse import from_argparse
 from ._click import Resolver, default_resolve, from_click, is_click_command
+from ._cyclopts import from_cyclopts, is_cyclopts_app
+from ._plumbum import from_plumbum, is_plumbum_app
 from .model import Command, Param
 from .privacy import find_machine_paths, redact_home
 from .render import (
@@ -96,12 +99,19 @@ def _introspect(cli: Any, name: str | None, resolve: Resolver | None) -> Command
         return from_click(cmd, name or getattr(cli.info, "name", None), resolve=resolve)
     if is_click_command(cli):
         return from_click(cli, name, resolve=resolve)
-    if callable(cli):
+    if is_cyclopts_app(cli):
+        return from_cyclopts(cli, name)
+    if is_plumbum_app(cli):
+        return from_plumbum(cli, name)
+    if inspect.isfunction(cli):
         raise TypeError(
             f"{getattr(cli, '__name__', cli)!r} is a function, not a CLI; if it builds the "
             "parser, pass its result (e.g. build_parser()) instead"
         )
-    raise TypeError(f"don't know how to introspect {type(cli).__name__}; expected Click, Typer or argparse")
+    raise TypeError(
+        f"don't know how to introspect {type(cli).__name__}; "
+        "expected Click, Typer, argparse, cyclopts or plumbum"
+    )
 
 
 def _hide_defaults(cmd: Command, names: list[str]) -> None:
@@ -203,10 +213,12 @@ def check_skill_file(
     max_chars: int | None = None,
     resolve: Resolver | None = None,
     hide_defaults: list[str] | None = None,
+    scripts: tuple[str, ...] = (),
 ) -> list[Problem]:
     """Return drift problems between the SKILL.md at ``path`` (and its reference file) and the CLI.
 
-    Settings not passed are read from the file's generated block.
+    Settings not passed are read from the file's generated block. ``scripts`` are
+    file names that also run the CLI in examples (``python scripts/tool.py …``).
     """
     path = Path(path)
     if not path.exists():
@@ -229,7 +241,7 @@ def check_skill_file(
         if max_chars is not None
         else (stored.max_chars if stored.max_chars is not None else SKILL_MAX_CHARS)
     )
-    return check(text, cmd, max_chars=limit, reference=reference)
+    return check(text, cmd, max_chars=limit, reference=reference, scripts=scripts)
 
 
 def _skill_name(text: str) -> str | None:

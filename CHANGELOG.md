@@ -4,6 +4,18 @@ All notable changes are listed here. The generated Markdown format is part of th
 public interface: any change to it is called out under **Output**.
 
 ## Unreleased
+- cyclopts (`App`, 3.0 to 5.x) and plumbum (`cli.Application` subclasses, 1.8+) CLIs:
+  `markdown`, `skill`, `check` and `introspect`.
+- `--from-main`: use the argparse parser that `main()` builds, by running `main()` up
+  to its `parse_args()` call.
+- Drift check:
+  - checks `python path/to/tool.py …` and `./tool …` lines (`check` also accepts the
+    target module's file name);
+  - reports missing required arguments in fenced blocks (`missing-argument`);
+  - placeholders spanning words (`<two words>`) and choices written as `a|b|c` are
+    not checked.
+- A function that is not a CLI gets a clearer error; classes and objects of
+  unsupported frameworks are no longer called "a function".
 
 ## 0.1.1 (2026-11-07)
 - Fixed: the order of "Shared options" depended on Python's hash seed, so

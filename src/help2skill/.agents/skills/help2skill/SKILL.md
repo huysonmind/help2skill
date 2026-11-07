@@ -1,12 +1,12 @@
 ---
 name: help2skill
-description: "Use help2skill to give a Python CLI (Click, Typer or argparse) an --llms flag, generate or refresh its SKILL.md, and check hand-written CLI examples against the real command tree. Use when adding agent docs to a CLI or when a help2skill check fails."
+description: "Use help2skill to give a Python CLI (Click, Typer, argparse, cyclopts or plumbum) an --llms flag, generate or refresh its SKILL.md, and check hand-written CLI examples against the real command tree. Use when adding agent docs to a CLI or when a help2skill check fails."
 ---
 
 <!-- help2skill:begin program=help2skill max-chars=30000 (generated from the CLI; edit outside this block) -->
 ## `help2skill [OPTIONS] COMMAND [ARGS]...`
 
-Generate LLM-ready docs and SKILL.md files from Click, Typer and argparse CLIs.
+Generate LLM-ready docs and SKILL.md files from Click, Typer, argparse, cyclopts and plumbum CLIs.
 
 TARGET is the import path of the CLI object, e.g. mypkg.cli:app. For a function that builds an argparse parser, write mypkg.cli:build_parser() (with parentheses).
 
@@ -23,6 +23,7 @@ Shared options (listed by name in the commands that accept them):
 - `--hide-default NAME` (repeatable): Leave out the default of this parameter (name or option), e.g. one computed at run time; repeatable. Stored in the file.
 - `--app-dir DIR`: Import TARGET from this directory, e.g. src (default: the current directory)
 - `--resolve MODULE:FUNC`: Function that turns a lazy placeholder command into the real command
+- `--from-main`: TARGET is a main() function that builds an argparse parser and parses sys.argv: run it until it parses, and use that parser. Code in main() before parsing runs.
 
 ### `help2skill markdown [OPTIONS] TARGET`
 
@@ -33,7 +34,7 @@ Arguments:
 
 Options:
 - `--max-chars INT`: Print only an index when the reference is longer than this (default: 0 = no limit)
-- Shared options: `--program`, `--hide-default`, `--app-dir`, `--resolve`
+- Shared options: `--program`, `--hide-default`, `--app-dir`, `--resolve`, `--from-main`
 
 ### `help2skill skill [OPTIONS] TARGET`
 
@@ -47,7 +48,7 @@ Options:
 - `--description TEXT`: Skill description (default: from the CLI help)
 - `-o, --output PATH`: SKILL.md path (default: skills/<name>/SKILL.md)
 - `--max-chars INT`: Above this size, keep an index in SKILL.md and the full reference in references/commands.md (default: 30000, or the value stored in the file; 0 = never split)
-- Shared options: `--program`, `--hide-default`, `--app-dir`, `--resolve`
+- Shared options: `--program`, `--hide-default`, `--app-dir`, `--resolve`, `--from-main`
 
 ### `help2skill check [OPTIONS] TARGET PATH`
 
@@ -59,7 +60,7 @@ Arguments:
 
 Options:
 - `--max-chars INT`: Override the value stored in the file
-- Shared options: `--program`, `--hide-default`, `--app-dir`, `--resolve`
+- Shared options: `--program`, `--hide-default`, `--app-dir`, `--resolve`, `--from-main`
 <!-- help2skill:end -->
 
 ## How to use it
@@ -76,7 +77,8 @@ Run the commands from the project root, inside the project's environment
 - Typer: add `llms: LlmsOption = False` (from `help2skill.typer`) to the callback, or
   build the command with `help2skill.typer.command(app, name="mytool")` and point the
   console script at it.
-- argparse has no hook; print the reference instead:
+- argparse, cyclopts and plumbum have no `--llms` hook; print the reference instead
+  (`--from-main` when an argparse parser is only built inside `main()`):
 
 ```console
 help2skill markdown "mypkg.cli:build_parser()"

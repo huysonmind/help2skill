@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "help2skill"
 dynamic = ["version"]
-description = "Make Python CLIs ready for LLM agents: --llms output, SKILL.md generation and drift checks for Click, Typer and argparse."
+description = "Make Python CLIs ready for LLM agents: --llms output, SKILL.md generation and drift checks for Click, Typer, argparse, cyclopts and plumbum."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "huysonmind", email = "350970572+huysonmind@users.noreply.github.com" }]
-keywords = ["cli", "click", "typer", "argparse", "llm", "agents", "agent-skills", "skill-md", "llms-txt"]
+keywords = ["cli", "click", "typer", "argparse", "cyclopts", "plumbum", "llm", "agents", "agent-skills", "skill-md", "llms-txt"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -34,7 +34,7 @@ Changelog = "https://github.com/huysonmind/help2skill/blob/main/CHANGELOG.md"
 help2skill = "help2skill.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "click>=8.1", "typer>=0.12", "ruff>=0.6", "mypy>=1.10"]
+dev = ["pytest>=8", "pytest-cov>=5", "click>=8.1", "typer>=0.12", "cyclopts>=3", "plumbum>=1.8", "ruff>=0.6", "mypy>=1.10"]
 
 # The version lives in one place: src/help2skill/__init__.py.
 [tool.hatch.version]
