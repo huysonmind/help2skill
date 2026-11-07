@@ -27,6 +27,7 @@ from . import (
 )
 from ._cyclopts import is_cyclopts_app
 from ._plumbum import is_plumbum_app
+from .sync import count_command_lines
 
 _STALE_KINDS = ("stale-block", "missing-block", "stale-reference", "missing-reference")
 
@@ -291,7 +292,14 @@ def _run(args: argparse.Namespace) -> int:
         print(f"help2skill: regenerate with: {_regenerate_command(args)}", file=sys.stderr)
     if problems:
         return 1
-    print(f"{args.path}: in sync with {args.target}")
+    text = args.path.read_text(encoding="utf-8")
+    prog = program or read_settings(text).program or introspect(cli, resolve=resolve).name
+    checked = count_command_lines(text, prog, scripts=_script_names(args.target))
+    if checked:
+        lines = f"{checked} hand-written command line{'s' if checked != 1 else ''} checked"
+    else:
+        lines = f"no hand-written `{prog}` command lines found to check"
+    print(f"{args.path}: in sync with {args.target} ({lines})")
     return 0
 
 

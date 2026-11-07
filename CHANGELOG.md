@@ -17,6 +17,8 @@ public interface: any change to it is called out under **Output**.
   - reports missing required arguments in fenced blocks (`missing-argument`);
   - placeholders spanning words (`<two words>`) and choices written as `a|b|c` are
     not checked.
+- `check` says how many hand-written command lines it checked, so a file where none
+  were recognised is not mistaken for a clean pass.
 - A function that is not a CLI gets a clearer error; classes and objects of
   unsupported frameworks are no longer called "a function".
 

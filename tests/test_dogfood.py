@@ -77,3 +77,13 @@ def test_todo_example_in_sync(monkeypatch) -> None:
     import todo
 
     assert_skill_in_sync(todo.main, example / "SKILL.md")
+
+
+def test_check_says_how_many_command_lines_it_checked(tmp_path, capsys) -> None:
+    assert main(["check", TARGET, str(SKILL)]) == 0
+    assert "hand-written command lines checked" in capsys.readouterr().out
+    bare = tmp_path / "SKILL.md"
+    text = SKILL.read_text()
+    bare.write_text(text[: text.index("<!-- help2skill:end -->") + len("<!-- help2skill:end -->")] + "\n")
+    assert main(["check", TARGET, str(bare)]) == 0
+    assert "no hand-written `help2skill` command lines found to check" in capsys.readouterr().out

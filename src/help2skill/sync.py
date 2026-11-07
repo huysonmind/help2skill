@@ -190,6 +190,19 @@ def check_references(text: str, cmd: Command, *, scripts: tuple[str, ...] = ()) 
     return problems
 
 
+def count_command_lines(text: str, program: str, *, scripts: tuple[str, ...] = ()) -> int:
+    """How many hand-written lines (outside the generated block) run ``program``."""
+    count = 0
+    for _, snippet, _ in _snippets(_without_block(text)):
+        try:
+            tokens = shlex.split(snippet.strip().removeprefix("$ "), comments=True)
+        except ValueError:
+            continue
+        if _strip_launchers(_join_placeholders(tokens), program, scripts):
+            count += 1
+    return count
+
+
 def _without_block(text: str) -> str:
     # Keep line numbers stable by blanking the block instead of removing it.
     return _BLOCK_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
