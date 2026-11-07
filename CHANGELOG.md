@@ -5,7 +5,7 @@ public interface: any change to it is called out under **Output**.
 
 ## Unreleased
 
-## 0.1.0 (not yet released)
+## 0.1.0 (2026-11-07)
 - Introspect Click, Typer (including Typer ≥ 0.26 with vendored Click) and argparse
   into one model.
 - `render_markdown`, `render_skill` (Agent Skills frontmatter validation).
