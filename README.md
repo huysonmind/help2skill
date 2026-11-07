@@ -2,7 +2,7 @@
 
 > **Status: alpha.** The output format may still change before 1.0.
 
-`--help` for LLM agents. Make a Click, Typer or argparse CLI easy for coding agents
+`--help` for LLM agents. Make a Click, Typer, argparse, cyclopts or plumbum CLI easy for coding agents
 (Claude Code, Codex, Cursor, Gemini CLI…) to use correctly:
 
 - **`--llms` flag**: prints a compact Markdown reference of the command tree (every
@@ -48,6 +48,14 @@ SKILL.md: line 12: `todo` has no subcommand `done` [unknown-command]
 
 More in [`examples/`](https://github.com/huysonmind/help2skill/tree/main/examples):
 a Typer app, sqlite-utils (48 commands) and pipx (argparse).
+
+## Does it help?
+
+In a [small experiment](https://github.com/huysonmind/help2skill/tree/main/evals/agent_commands)
+(16 tasks on llm and sqlite-utils, Claude Sonnet and Haiku), agents given the generated
+SKILL.md wrote 32/32 correct commands with no `--help` calls. Exploring with `--help`
+got 31/32 with 65 calls; answering from memory got 28/32. One run per cell, so treat it
+as a first signal.
 
 ## Quick start
 
@@ -115,7 +123,24 @@ argparse has no hook for an extra flag, so use the command line (or the Python A
 ```console
 $ help2skill markdown mytool.cli:parser
 $ help2skill markdown "mytool.cli:build_parser()"   # a function that returns the parser
+$ help2skill markdown mytool.cli:main --from-main     # main() builds and parses the parser
 ```
+
+`--from-main` is for scripts whose parser only exists inside `main()`: help2skill runs
+`main()` until it calls `parse_args()` and stops there. Whatever `main()` does before
+parsing still runs, so read it first.
+
+### cyclopts and plumbum
+
+Point the command line or `help2skill.introspect` at the cyclopts `App` or the plumbum
+`cli.Application` subclass (the class, not an instance):
+
+```console
+$ help2skill markdown mytool.cli:app        # cyclopts.App
+$ help2skill markdown mytool.cli:MyTool     # plumbum cli.Application subclass
+```
+
+There is no `--llms` flag for them yet; use `help2skill skill` and `check`.
 
 ### Large CLIs
 
@@ -170,10 +195,14 @@ it on demand). Change the limit with `--max-chars` (0 = never split).
 
 **What the check catches** in code spans and fenced blocks of your hand-written text:
 unknown subcommands and options (with "did you mean"), options at the wrong level,
-values not among an option's or argument's choices, values given to flags, and
-single-letter clusters such as `-fq`. Lines continued with `\` are joined, and lines
-are recognised with launchers in front: `uv run [--with …] mytool …`, `uvx`,
-`pipx run`, `poetry run`, `python -m mytool`, `VAR=value mytool …`.
+values not among an option's or argument's choices, values given to flags,
+single-letter clusters such as `-fq`, and (in fenced blocks) missing required
+arguments. Lines continued with `\` are joined, and lines are recognised with launchers
+in front: `uv run [--with …] mytool …`, `uvx`, `pipx run`, `poetry run`,
+`python -m mytool`, `python path/to/mytool.py …`, `./mytool`, `VAR=value mytool …`.
+`check` also accepts the target module's file name (`python scripts/build.py …` for
+`build:parser`). Placeholders such as `<file>`, `<two words>`, `FILE`, `my_name` and
+`a|b|c` are not checked.
 
 Shipping the skill inside your package under `.agents/skills/<name>/` makes it
 installable with [library-skills](https://github.com/tiangolo/library-skills). With
@@ -214,7 +243,7 @@ repos:
 ```python
 import help2skill
 
-tree = help2skill.introspect(app, "mytool")  # Click, Typer or argparse
+tree = help2skill.introspect(app, "mytool")  # Click, Typer, argparse, cyclopts, plumbum
 print(help2skill.render_markdown(tree))
 help2skill.write_skill(app, "SKILL.md", name="mytool")
 problems = help2skill.check_skill_file(app, "SKILL.md")

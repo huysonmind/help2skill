@@ -25,6 +25,9 @@ from . import (
     render_llms,
     write_skill,
 )
+from ._cyclopts import is_cyclopts_app
+from ._plumbum import is_plumbum_app
+from .sync import count_command_lines
 
 _STALE_KINDS = ("stale-block", "missing-block", "stale-reference", "missing-reference")
 
@@ -36,7 +39,10 @@ class UsageError(Exception):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="help2skill",
-        description="Generate LLM-ready docs and SKILL.md files from Click, Typer and argparse CLIs.",
+        description=(
+            "Generate LLM-ready docs and SKILL.md files from Click, Typer, argparse, cyclopts "
+            "and plumbum CLIs."
+        ),
         epilog="TARGET is the import path of the CLI object, e.g. mypkg.cli:app. For a function "
         "that builds an argparse parser, write mypkg.cli:build_parser() (with parentheses).",
     )
@@ -99,11 +105,50 @@ def build_parser() -> argparse.ArgumentParser:
             metavar="MODULE:FUNC",
             help="Function that turns a lazy placeholder command into the real command",
         )
+        p.add_argument(
+            "--from-main",
+            action="store_true",
+            help="TARGET is a main() function that builds an argparse parser and parses sys.argv: "
+            "run it until it parses, and use that parser. Code in main() before parsing runs.",
+        )
     return parser
 
 
-def load_target(spec: str, *, call: bool = True, app_dir: str | None = None) -> Any:
-    """Import ``module:attr``; ``module:func()`` calls ``func`` (e.g. a parser factory)."""
+class _Captured(Exception):
+    def __init__(self, parser: argparse.ArgumentParser) -> None:
+        self.parser = parser
+
+
+def capture_parser(main: Any) -> argparse.ArgumentParser:
+    """Run ``main()`` until it parses its arguments, and return that argparse parser.
+
+    For scripts that build the parser inside ``main()``. Whatever ``main()`` does
+    before parsing still runs; nothing after it does.
+    """
+
+    def stop(self: argparse.ArgumentParser, *args: Any, **kwargs: Any) -> Any:
+        raise _Captured(self)
+
+    names = ("parse_args", "parse_known_args")
+    saved = {name: getattr(argparse.ArgumentParser, name) for name in names}
+    for name in names:
+        setattr(argparse.ArgumentParser, name, stop)
+    try:
+        main()
+    except _Captured as captured:
+        return captured.parser
+    finally:
+        for name, method in saved.items():
+            setattr(argparse.ArgumentParser, name, method)
+    raise UsageError(f"{getattr(main, '__name__', main)}() returned without parsing arguments with argparse")
+
+
+def load_target(spec: str, *, call: bool = True, app_dir: str | None = None, from_main: bool = False) -> Any:
+    """Import ``module:attr``; ``module:func()`` calls ``func`` (e.g. a parser factory).
+
+    ``from_main`` runs ``attr`` (a ``main()`` function) until it parses its
+    arguments and returns that parser, see :func:`capture_parser`.
+    """
     module_name, _, attr = spec.partition(":")
     if not module_name or not attr or "/" in module_name or module_name.endswith(".py"):
         raise UsageError(f"target must look like module.path:attribute, got {spec!r}")
@@ -129,13 +174,18 @@ def load_target(spec: str, *, call: bool = True, app_dir: str | None = None) -> 
                 hint = f"; did you mean {close[0]!r}?" if close else ""
                 raise UsageError(f"{module_name!r} has no attribute {attr!r}{hint}")
             obj = getattr(obj, part)
-        if call and explicit_call:
+        if from_main:
+            if not callable(obj):
+                raise UsageError(f"--from-main: {spec} is not a function")
+            obj = capture_parser(obj)
+        elif call and explicit_call:
             obj = obj()
         elif call and callable(obj) and not _is_cli_object(obj):
             if "parser" not in attr.rsplit(".", 1)[-1].lower():
                 raise UsageError(
-                    f"{spec} is a function, not a Click command, Typer app or ArgumentParser. "
-                    f"If it returns a parser, write {spec}() to call it."
+                    f"{spec} is a function, not a CLI object (Click, Typer, argparse, cyclopts, plumbum). "
+                    f"If it returns a parser, write {spec}() to call it; if it builds and parses one "
+                    "inside, add --from-main."
                 )
             obj = obj()
     except SystemExit as exc:
@@ -157,6 +207,8 @@ def _is_cli_object(obj: Any) -> bool:
         isinstance(obj, argparse.ArgumentParser)
         or hasattr(obj, "registered_commands")
         or (hasattr(obj, "params") and hasattr(obj, "make_context"))
+        or is_cyclopts_app(obj)
+        or is_plumbum_app(obj)
     )
 
 
@@ -184,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    cli = load_target(args.target, app_dir=args.app_dir)
+    cli = load_target(args.target, app_dir=args.app_dir, from_main=args.from_main)
     resolve = load_target(args.resolve, call=False, app_dir=args.app_dir) if args.resolve else None
     stored = None
     if args.action == "skill" and args.output and args.output.exists():
@@ -232,6 +284,7 @@ def _run(args: argparse.Namespace) -> int:
         max_chars=args.max_chars,
         resolve=resolve,
         hide_defaults=args.hide_defaults,
+        scripts=_script_names(args.target),
     )
     for problem in problems:
         print(f"{args.path}: {problem}", file=sys.stderr)
@@ -239,7 +292,14 @@ def _run(args: argparse.Namespace) -> int:
         print(f"help2skill: regenerate with: {_regenerate_command(args)}", file=sys.stderr)
     if problems:
         return 1
-    print(f"{args.path}: in sync with {args.target}")
+    text = args.path.read_text(encoding="utf-8")
+    prog = program or read_settings(text).program or introspect(cli, resolve=resolve).name
+    checked = count_command_lines(text, prog, scripts=_script_names(args.target))
+    if checked:
+        lines = f"{checked} hand-written command line{'s' if checked != 1 else ''} checked"
+    else:
+        lines = f"no hand-written `{prog}` command lines found to check"
+    print(f"{args.path}: in sync with {args.target} ({lines})")
     return 0
 
 
@@ -272,4 +332,16 @@ def _regenerate_command(args: argparse.Namespace) -> str:
         parts += ["--app-dir", str(args.app_dir)]
     if args.resolve:
         parts += ["--resolve", args.resolve]
+    if args.from_main:
+        parts.append("--from-main")
     return shlex.join(parts)
+
+
+def _script_names(spec: str) -> tuple[str, ...]:
+    """File name of the target module, so ``python path/to/tool.py …`` lines are checked."""
+    module = sys.modules.get(spec.partition(":")[0])
+    file = getattr(module, "__file__", None)
+    if not file:
+        return ()
+    name = Path(file).name
+    return () if name == "__init__.py" else (name,)

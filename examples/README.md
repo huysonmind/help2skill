@@ -20,5 +20,5 @@ Try the drift check on the todo example (from the repository root):
 
 ```console
 $ uv run --with typer help2skill check todo:main examples/todo/SKILL.md --app-dir examples/todo
-examples/todo/SKILL.md: in sync with todo:main
+examples/todo/SKILL.md: in sync with todo:main (3 hand-written command lines checked)
 ```

@@ -36,3 +36,25 @@ def test_load_target_errors():
     with pytest.raises(UsageError):
         load_target("no_colon")
     assert load_target("sample_clis:build_parser").prog == "notes"
+
+
+def test_from_main_captures_a_parser_built_inside_main(tmp_path, monkeypatch, capsys):
+    from help2skill.cli import main
+
+    (tmp_path / "tool_main.py").write_text(
+        "import argparse\n\n"
+        "SIDE_EFFECTS = []\n\n"
+        "def main():\n"
+        "    p = argparse.ArgumentParser(prog='tool', description='Tool.')\n"
+        "    p.add_argument('--fast', action='store_true')\n"
+        "    args = p.parse_args()\n"
+        "    SIDE_EFFECTS.append(args)\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    assert main(["markdown", "tool_main:main"]) == 2
+    assert "--from-main" in capsys.readouterr().err
+    assert main(["markdown", "tool_main:main", "--from-main"]) == 0
+    assert "- `--fast`" in capsys.readouterr().out
+    import tool_main
+
+    assert tool_main.SIDE_EFFECTS == []  # main() stopped at parse_args

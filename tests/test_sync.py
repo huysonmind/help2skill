@@ -114,3 +114,29 @@ def test_prose_option_names_and_placeholders_are_skipped():
     assert check_references("Use `notes add -t/--tag` to tag a note.", tree) == []
     assert check_references("`notes my_command --x`", tree) == []
     assert check_references("`notes your-plugin`", tree) == []
+
+
+def test_script_launchers_are_checked():
+    tree = help2skill.introspect(notes, "notes")
+    for line in (
+        "python notes.py add --nope",
+        "python3 -X utf8 tools/notes.py add --nope",
+        "uv run python scripts/notes.py add --nope",
+        "./notes add --nope",
+        "python bin/010_notes.py add --nope",
+    ):
+        problems = check_references(f"`{line}`", tree, scripts=("010_notes.py",))
+        assert [p.kind for p in problems] == ["unknown-option"], line
+    assert check_references("`python other.py add --nope`", tree) == []
+
+
+def test_missing_arguments_only_in_fenced_blocks():
+    tree = help2skill.introspect(notes, "notes")
+    fenced = "```console\nnotes add\nnotes add --help\nnotes add <text>\n```\n"
+    assert [(p.kind, p.line) for p in check_references(fenced, tree)] == [("missing-argument", 2)]
+    assert check_references("Use `notes add` to add a note.", tree) == []
+
+
+def test_placeholders_spanning_words_and_alternatives():
+    tree = help2skill.introspect(notes, "notes")
+    assert check_references("`notes add <the note text> --priority low|high`", tree) == []
