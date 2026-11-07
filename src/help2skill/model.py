@@ -55,6 +55,8 @@ class Command:
     hidden_subcommands: list[str] = field(default_factory=list)
     # Groups of options that cannot be combined: (option names, one is required).
     exclusive: list[tuple[list[str], bool]] = field(default_factory=list)
+    # Unknown options are passed on as arguments (Click ``ignore_unknown_options``).
+    passthrough: bool = False
 
     @property
     def is_group(self) -> bool:

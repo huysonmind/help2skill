@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from help2skill.cli import build_parser, main
-from help2skill.testing import assert_skill_in_sync
+from help2skill.testing import assert_docs_in_sync, assert_skill_in_sync
 
 SKILL = Path(__file__).parents[1] / "src/help2skill/.agents/skills/help2skill/SKILL.md"
 TARGET = "help2skill.cli:build_parser()"
@@ -17,6 +17,11 @@ TARGET = "help2skill.cli:build_parser()"
 
 def test_own_skill_in_sync() -> None:
     assert_skill_in_sync(build_parser(), SKILL)
+
+
+def test_own_docs_in_sync() -> None:
+    root = Path(__file__).parents[1]
+    assert_docs_in_sync(build_parser(), [root / "README.md", root / "examples", SKILL])
 
 
 def test_shared_options_order_does_not_depend_on_hash_seed() -> None:

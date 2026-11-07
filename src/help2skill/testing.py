@@ -1,11 +1,11 @@
-"""pytest helper: fail the build when SKILL.md drifts from the CLI."""
+"""pytest helpers: fail the build when SKILL.md or the docs drift from the CLI."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from . import check_skill_file
+from . import check_docs, check_skill_file
 from ._click import Resolver
 
 
@@ -42,3 +42,23 @@ def assert_skill_in_sync(
         ):
             hint = f"\nRegenerate the block with: help2skill skill MODULE:ATTR -o {path}"
         raise AssertionError(f"{path} is out of sync with the CLI:\n{details}{hint}")
+
+
+def assert_docs_in_sync(
+    cli: Any,
+    paths: list[str | Path],
+    *,
+    program: str | None = None,
+    resolve: Resolver | None = None,
+    exclude: list[str] | tuple[str, ...] = (),
+    scripts: tuple[str, ...] = (),
+) -> None:
+    """Raise ``AssertionError`` listing every command line in ``paths`` the CLI would reject.
+
+    ``paths`` are documentation files or directories (README.md, docs/); build
+    them from ``__file__`` so the test passes from any directory.
+    """
+    results = check_docs(cli, paths, program=program, resolve=resolve, exclude=exclude, scripts=scripts)
+    lines = [f"- {r.path}:{p.line}: {p.message} [{p.kind}]" for r in results for p in r.problems]
+    if lines:
+        raise AssertionError("documentation is out of sync with the CLI:\n" + "\n".join(lines))

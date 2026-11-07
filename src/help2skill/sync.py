@@ -12,8 +12,10 @@ from __future__ import annotations
 import difflib
 import re
 import shlex
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from ._snippets import Snippet, markdown_snippets
 from .model import Command
 from .privacy import redact_home
 from .render import SKILL_MAX_CHARS, render_index, render_markdown
@@ -23,9 +25,11 @@ END = "<!-- help2skill:end -->"
 _BLOCK_RE = re.compile(r"<!-- help2skill:begin[^\n]*?-->\n?(.*?)<!-- help2skill:end -->", re.S)
 _BEGIN_RE = re.compile(r"<!-- help2skill:begin([^\n(]*)")
 _SETTING_RE = re.compile(r"([a-z-]+)=(\S+)")
-_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
-_FENCE_RE = re.compile(r"^(```|~~~)")
 _ALWAYS_OK = {"--help", "-h", "--llms"}
+# Options after which a command needs none of its arguments.
+_NO_ARGUMENTS_NEEDED = {"--help", "-h", "--llms", "--version", "-V"}
+# argparse REMAINDER / PARSER: everything after is passed on unchecked.
+_REST_NARGS = ("...", "A...")
 _STOP_TOKENS = {"|", "||", "&&", ";", ">", ">>", "<", "--"}
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # Launchers that run the real command, with their options that take a value.
@@ -164,7 +168,7 @@ def check(
     elif expected_reference is not None and reference is not None:
         if reference.strip() != expected_reference.strip():
             problems.append(Problem("stale-reference", f"{REFERENCE_FILE} is out of date"))
-    problems.extend(check_references(_without_block(text), cmd, scripts=scripts))
+    problems.extend(check_references(without_block(text), cmd, scripts=scripts))
     return problems
 
 
@@ -184,62 +188,49 @@ def check_references(text: str, cmd: Command, *, scripts: tuple[str, ...] = ()) 
     arguments are reported only for lines in fenced blocks, since a code span in
     prose often names a command without its arguments.
     """
-    problems = []
-    for lineno, snippet, in_fence in _snippets(text):
-        problems.extend(_check_invocation(snippet, cmd, lineno, complete=in_fence, scripts=scripts))
-    return problems
+    return check_snippets(markdown_snippets(text), cmd, scripts=scripts)[0]
+
+
+def check_snippets(
+    snippets: Iterable[Snippet], cmd: Command, *, scripts: tuple[str, ...] = ()
+) -> tuple[list[Problem], int]:
+    """Check command lines found in a document; return the problems and how many lines ran ``cmd``."""
+    problems: list[Problem] = []
+    checked = 0
+    for lineno, snippet, in_block in snippets:
+        if _invocation_tokens(snippet, cmd.name, scripts):
+            checked += 1
+            problems.extend(_check_invocation(snippet, cmd, lineno, complete=in_block, scripts=scripts))
+    return problems, checked
 
 
 def count_command_lines(text: str, program: str, *, scripts: tuple[str, ...] = ()) -> int:
     """How many hand-written lines (outside the generated block) run ``program``."""
-    count = 0
-    for _, snippet, _ in _snippets(_without_block(text)):
-        try:
-            tokens = shlex.split(snippet.strip().removeprefix("$ "), comments=True)
-        except ValueError:
-            continue
-        if _strip_launchers(_join_placeholders(tokens), program, scripts):
-            count += 1
-    return count
+    return sum(
+        1
+        for _, snippet, _ in markdown_snippets(without_block(text))
+        if _invocation_tokens(snippet, program, scripts)
+    )
 
 
-def _without_block(text: str) -> str:
+def _invocation_tokens(snippet: str, program: str, scripts: tuple[str, ...]) -> list[str]:
+    """Tokens of ``snippet`` from the program name on; empty if it does not run ``program``."""
+    try:
+        tokens = shlex.split(snippet.strip().removeprefix("$ "), comments=True)
+    except ValueError:
+        return []
+    return _strip_launchers(_join_placeholders(tokens), program, scripts)
+
+
+def without_block(text: str) -> str:
     # Keep line numbers stable by blanking the block instead of removing it.
     return _BLOCK_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
-
-
-def _snippets(text: str):
-    in_fence = False
-    pending: tuple[int, str] | None = None  # a command continued with a trailing backslash
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if _FENCE_RE.match(line.strip()):
-            in_fence = not in_fence
-            if pending:
-                yield (*pending, True)
-                pending = None
-            continue
-        if in_fence:
-            if pending:
-                lineno, line = pending[0], pending[1] + " " + line.strip()
-                pending = None
-            if line.rstrip().endswith("\\"):
-                pending = (lineno, line.rstrip()[:-1])
-                continue
-            yield lineno, line, True
-        else:
-            for match in _CODE_SPAN_RE.finditer(line):
-                yield lineno, match.group(1), False
 
 
 def _check_invocation(
     snippet: str, root: Command, lineno: int, *, complete: bool = False, scripts: tuple[str, ...] = ()
 ) -> list[Problem]:
-    snippet = snippet.strip().removeprefix("$ ")
-    try:
-        tokens = shlex.split(snippet, comments=True)
-    except ValueError:
-        return []
-    tokens = _strip_launchers(_join_placeholders(tokens), root.name, scripts)
+    tokens = _invocation_tokens(snippet, root.name, scripts)
     if not tokens:
         return []
     return _Walker(root, lineno, complete=complete).run(tokens[1:])
@@ -267,9 +258,16 @@ class _Walker:
         finished = True
         while i < len(tokens):
             token = tokens[i]
+            if token == "--":
+                # Everything after "--" is a positional argument.
+                self.given += len(tokens) - i - 1
+                break
             if token in _STOP_TOKENS:
                 break
-            if token in _ALWAYS_OK:
+            if self.at_rest_argument():
+                finished = False  # the rest of the line goes to another program
+                break
+            if token.partition("=")[0] in _NO_ARGUMENTS_NEEDED:
                 self.complete = False  # --help needs no arguments
             if _PROSE_OPTION_RE.match(token):
                 finished = False  # "-s/--short" names an option in prose; it is not a command line
@@ -285,12 +283,24 @@ class _Walker:
             self.check_missing_arguments()
         return self.problems
 
+    def at_rest_argument(self) -> bool:
+        args = self.node.arguments
+        return (
+            not self.node.is_group
+            and self.positional < len(args)
+            and args[self.positional].nargs in _REST_NARGS
+        )
+
     def check_missing_arguments(self) -> None:
         node = self.node
         if node.is_group:
             return
         positional = [a for a in node.arguments if a.name not in self.by_name]
-        missing = [a for a in positional[self.given :] if a.required]
+        # Optional and variadic arguments may be empty, wherever they are: the
+        # parser gives tokens to the required ones first (argparse ``?``, Click
+        # ``nargs=-1`` before a required argument).
+        required = [a for a in positional if a.required]
+        missing = required[self.given :] if self.given < len(required) else []
         if missing:
             names = ", ".join(f"`{a.name.upper()}`" for a in missing)
             self.report("missing-argument", f"`{_path(node)}` needs {names}")
@@ -306,6 +316,8 @@ class _Walker:
             return self.option(tokens, i)
         if param is None and not flag.startswith("--") and len(flag) > 2 and not has_value:
             return self.short_cluster(tokens, i)
+        if param is None and self.node.passthrough:
+            return i + 1  # passed on to the command's arguments
         if param is None:
             self.misplaced_option(flag)
             # Skip a likely value so it is not mistaken for a subcommand.
@@ -383,6 +395,8 @@ class _Walker:
             )
 
     def misplaced_option(self, flag: str, *, cluster: str | None = None) -> None:
+        if flag == "--version" and self.node is self.ancestors[0]:
+            return  # often handled by hand, outside the parser
         owner = next((a for a in self.ancestors if _find_option(a, flag)), None)
         if owner is not None:
             self.report(
@@ -418,11 +432,13 @@ class _Walker:
                 return False
             default = node.get(node.default_command) if node.default_command else None
             if default is not None:
+                if _PLUGIN_NAME_RE.match(token):
+                    return False  # likely a plugin's subcommand, not an argument
                 # The token is the first argument of the default subcommand.
                 self.enter(default)
                 return self.positional_token(token)
-            if _is_placeholder(token):
-                return False
+            if _is_placeholder(token) or "/" in token:
+                return False  # "add/remove" in prose, or a path
             names = [c.name for c in node.subcommands] + [a for c in node.subcommands for a in c.aliases]
             self.report(
                 "unknown-command",
@@ -518,18 +534,21 @@ def _strip_launchers(tokens: list[str], root_name: str, scripts: tuple[str, ...]
 
 
 def _join_placeholders(tokens: list[str]) -> list[str]:
-    """``<thư mục đợt>`` is one placeholder even though the shell splits it."""
+    """``<thư mục đợt>`` and ``$(cmd --opt)`` are one value even though the shell splits them."""
     joined: list[str] = []
     open_at: int | None = None
+    close = ""
     for token in tokens:
         if open_at is not None:
             joined[open_at] += " " + token
-            if token.endswith(">"):
+            if token.endswith(close):
                 open_at = None
             continue
         joined.append(token)
-        if token.startswith("<") and not token.endswith(">"):
-            open_at = len(joined) - 1
+        for opener, closer in (("<", ">"), ("$(", ")"), ("`", "`")):
+            if token.startswith(opener) and not (len(token) > len(opener) and token.endswith(closer)):
+                open_at, close = len(joined) - 1, closer
+                break
     return joined
 
 
@@ -559,6 +578,8 @@ def _find_option(cmd: Command, flag: str):
     return None
 
 
+# "hello-world": a subcommand name (from a plugin) rather than an argument.
+_PLUGIN_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)+$")
 # "-s/--short" or "--json/--no-json": option names written as prose.
 _PROSE_OPTION_RE = re.compile(r"^--?[\w-]+/--?[\w-]")
 _PLACEHOLDER_PREFIXES = ("<", "{", "[", "$", "my_", "my-", "your_", "your-")
