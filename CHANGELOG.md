@@ -3,7 +3,7 @@
 All notable changes are listed here. The generated Markdown format is part of the
 public interface: any change to it is called out under **Output**.
 
-## Unreleased
+## 0.4.0 (2026-11-08)
 - `lint` and `check` read more of what real docs and skills contain (found by trying
   help2skill on five projects that wrote their own checker):
   - commands in Mermaid diagrams (`%%` comments skipped), and table rows whose first
