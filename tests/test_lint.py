@@ -262,3 +262,23 @@ def test_prose_with_slashes(tree):
 
 def test_root_version_option_is_accepted(tree):
     assert kinds("```bash\nnotes --version\n```\n", tree) == []
+
+
+def test_diagram_blocks_are_skipped(tree):
+    text = """\
+    ```
+    browser ──► notes add milk --nope
+                notes   (or --mock)
+    ```
+
+    ```bash
+    # ─ a comment, but a shell block is still checked
+    notes add milk --nope
+    ```
+    """
+    assert kinds(text, tree) == [(8, "unknown-option")]
+
+
+def test_elided_arguments_stop_the_check(tree):
+    text = "```bash\nnotes add ... --tag home\nnotes add \u2026 milk extra\nnotes add ... --nope\n```\n"
+    assert kinds(text, tree) == []

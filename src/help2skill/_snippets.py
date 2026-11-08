@@ -7,7 +7,8 @@ span in prose, which often names a command without its arguments.
 Code blocks in other languages (Python, TOML, JSON…) are skipped. In console
 blocks (``console``, ``shell-session``) that use a prompt (``$ ``), only the
 prompt lines are commands; the others are output. A line, or the line just before a code block,
-containing ``help2skill: ignore`` is skipped.
+containing ``help2skill: ignore`` is skipped. Untagged blocks drawn with
+box-drawing characters (diagrams) are skipped too.
 """
 
 from __future__ import annotations
@@ -30,6 +31,9 @@ SHELL_LANGS = frozenset(
 PROMPT_LANGS = frozenset(
     {"console", "shell-session", "shellsession", "sh-session", "bash-session", "terminal", "doscon"}
 )
+# Untagged or plain-text blocks holding these are diagrams, not commands.
+_PLAIN_LANGS = frozenset({"", "text", "txt", "plain", "plaintext", "none"})
+_DIAGRAM_RE = re.compile("[\u2500-\u25ff]")
 _PROMPT_RE = re.compile(r"^\s*(?:\(\S+\)\s*)?(?:\$|%|>|PS>|PS [^>]*>)\s")
 
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})\s*\{?\.?([\w+-]*)")
@@ -118,6 +122,8 @@ def block_snippets(lines: Iterable[tuple[int, str]], lang: str) -> Iterator[Snip
     if lang not in PROMPT_LANGS and lang not in SHELL_LANGS:
         return
     lines = list(lines)
+    if lang in _PLAIN_LANGS and any(_DIAGRAM_RE.search(line) for _, line in lines):
+        return  # box-drawing characters: an ASCII diagram
     # A console block without any prompt holds only commands.
     prompt_only = lang in PROMPT_LANGS and any(_PROMPT_RE.match(line) for _, line in lines)
     pending: tuple[int, str] | None = None
