@@ -18,6 +18,9 @@ inputs:
   exclude:
     description: Glob patterns of files to skip, separated by spaces (e.g. "docs/legacy/*").
     default: ""
+  global-options:
+    description: Set to "true" if the CLI accepts a parent command's options after its subcommands (it moves them in front itself).
+    default: "false"
   app-dir:
     description: Import the target from this directory (e.g. src) instead of an installed package.
     default: ""
@@ -54,11 +57,13 @@ runs:
         PROGRAM: ${{ inputs.program }}
         EXCLUDE: ${{ inputs.exclude }}
         APP_DIR: ${{ inputs.app-dir }}
+        GLOBAL_OPTIONS: ${{ inputs.global-options }}
       run: |
         read -ra paths <<< "$PATHS"
         args=(lint "$TARGET" "${paths[@]}" --format github)
         if [ -n "$PROGRAM" ]; then args+=(--program "$PROGRAM"); fi
         if [ -n "$APP_DIR" ]; then args+=(--app-dir "$APP_DIR"); fi
+        if [ "$GLOBAL_OPTIONS" = "true" ]; then args+=(--global-options); fi
         read -ra excludes <<< "$EXCLUDE"
         for pattern in "${excludes[@]}"; do args+=(--exclude "$pattern"); done
         python -m help2skill "${args[@]}"

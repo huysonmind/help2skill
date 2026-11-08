@@ -60,7 +60,7 @@ __all__ = [
     "write_skill",
 ]
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 
 # Names a framework falls back to when the real program name is unknown.
@@ -256,6 +256,7 @@ def check_docs(
     resolve: Resolver | None = None,
     exclude: list[str] | tuple[str, ...] = (),
     scripts: tuple[str, ...] = (),
+    global_options: bool = False,
 ) -> list[FileResult]:
     """Check every command line in a project's documentation against the CLI.
 
@@ -263,11 +264,13 @@ def check_docs(
     the current directory); directories are searched for Markdown, MDX and
     reStructuredText files, skipping changelogs. No SKILL.md is needed. Returns
     one :class:`FileResult` per file; a file is fine when its ``problems`` is empty.
+    ``global_options``: the CLI accepts a parent's options after its subcommands.
     """
     files = find_docs(paths if paths is not None else default_paths(), exclude=exclude)
     if not files:
         raise FileNotFoundError("no documentation files found (pass README.md, docs/ or other paths)")
     cmd = introspect(cli, program_name(cli, program, resolve=resolve), resolve=resolve)
+    cmd.global_options = global_options
     return lint_files(cmd, files, scripts=scripts)
 
 

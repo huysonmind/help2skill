@@ -3,6 +3,17 @@
 All notable changes are listed here. The generated Markdown format is part of the
 public interface: any change to it is called out under **Output**.
 
+## 0.4.0 (2026-11-08)
+- `lint` and `check` read more of what real docs and skills contain (found by trying
+  help2skill on five projects that wrote their own checker):
+  - commands in Mermaid diagrams (`%%` comments skipped), and table rows whose first
+    cell is one command and whose other cells hold only options;
+  - hidden options (Click `hidden=True`, argparse `help=SUPPRESS`) are accepted;
+  - `describe-*` or `vars-{get,set}` (several commands at once) are not checked.
+- `lint --global-options` (Action input `global-options`, API `global_options=True`):
+  accept a parent command's options after its subcommands, for CLIs that move them
+  in front themselves.
+
 ## 0.3.1 (2026-11-08)
 - `lint` and `check` skip untagged or plain-text code blocks drawn with box-drawing
   characters (ASCII diagrams), and stop checking a command line at `...` / `…`,

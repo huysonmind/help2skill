@@ -52,13 +52,22 @@ def assert_docs_in_sync(
     resolve: Resolver | None = None,
     exclude: list[str] | tuple[str, ...] = (),
     scripts: tuple[str, ...] = (),
+    global_options: bool = False,
 ) -> None:
     """Raise ``AssertionError`` listing every command line in ``paths`` the CLI would reject.
 
     ``paths`` are documentation files or directories (README.md, docs/); build
     them from ``__file__`` so the test passes from any directory.
     """
-    results = check_docs(cli, paths, program=program, resolve=resolve, exclude=exclude, scripts=scripts)
+    results = check_docs(
+        cli,
+        paths,
+        program=program,
+        resolve=resolve,
+        exclude=exclude,
+        scripts=scripts,
+        global_options=global_options,
+    )
     lines = [f"- {r.path}:{p.line}: {p.message} [{p.kind}]" for r in results for p in r.problems]
     if lines:
         raise AssertionError("documentation is out of sync with the CLI:\n" + "\n".join(lines))
