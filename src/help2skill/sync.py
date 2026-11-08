@@ -31,6 +31,8 @@ _NO_ARGUMENTS_NEEDED = {"--help", "-h", "--llms", "--version", "-V"}
 # argparse REMAINDER / PARSER: everything after is passed on unchecked.
 _REST_NARGS = ("...", "A...")
 _STOP_TOKENS = {"|", "||", "&&", ";", ">", ">>", "<", "--"}
+# "cmd sub ... value": the writer left arguments out, so the rest cannot be checked.
+_ELISION_TOKENS = {"...", "\u2026", "[...]", "<...>"}
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # Launchers that run the real command, with their options that take a value.
 _UV_RUN_VALUE_OPTS = {
@@ -263,6 +265,9 @@ class _Walker:
                 self.given += len(tokens) - i - 1
                 break
             if token in _STOP_TOKENS:
+                break
+            if token in _ELISION_TOKENS:
+                finished = False
                 break
             if self.at_rest_argument():
                 finished = False  # the rest of the line goes to another program

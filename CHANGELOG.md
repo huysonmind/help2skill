@@ -3,6 +3,11 @@
 All notable changes are listed here. The generated Markdown format is part of the
 public interface: any change to it is called out under **Output**.
 
+## 0.3.1 (2026-11-08)
+- `lint` and `check` skip untagged or plain-text code blocks drawn with box-drawing
+  characters (ASCII diagrams), and stop checking a command line at `...` / `…`,
+  where the writer left arguments out.
+
 ## 0.3.0 (2026-11-08)
 - `help2skill lint TARGET [PATHS…]`: check every command line in a README and `docs/`
   (Markdown, MDX, reStructuredText) against the CLI, no SKILL.md needed. Changelogs
