@@ -57,6 +57,11 @@ class Command:
     exclusive: list[tuple[list[str], bool]] = field(default_factory=list)
     # Unknown options are passed on as arguments (Click ``ignore_unknown_options``).
     passthrough: bool = False
+    # Options that work but are not documented (``hidden=True``, ``help=SUPPRESS``).
+    hidden_params: list[Param] = field(default_factory=list)
+    # Set on the root: the CLI accepts a parent's options after its subcommands
+    # too (it moves them itself), so they are not reported as misplaced.
+    global_options: bool = False
 
     @property
     def is_group(self) -> bool:

@@ -101,6 +101,7 @@ def _build(cmd: Any, name: str, path: list[str], ctx: Any, resolve: Resolver) ->
         deprecated=bool(getattr(cmd, "deprecated", False)),
         default_command=getattr(cmd, "default_cmd_name", None),
         hidden_subcommands=hidden,
+        hidden_params=[_param(p) for p in cmd.params if not _visible(p) and p.name not in INTERNAL_PARAMS],
         passthrough=bool((getattr(cmd, "context_settings", None) or {}).get("ignore_unknown_options")),
     )
 

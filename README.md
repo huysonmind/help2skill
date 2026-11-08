@@ -184,6 +184,15 @@ lines, and changelogs are left out unless named. To skip an example on purpose (
 plugin command, a deliberate mistake), write `help2skill: ignore` on its line or on the
 line before its code block (`<!-- help2skill: ignore -->`, `.. help2skill: ignore`).
 
+Commands in Mermaid diagrams are checked, and so are table rows such as
+`` | `mytool export` | `--json` for machine output | ``, where the options sit in the
+description cell. Hidden options are accepted; `mytool describe-*` or `mytool vars-{get,set}`
+name several commands and are left alone. If your CLI moves global options in front of
+the subcommand itself (`mytool export --verbose`), pass `--global-options`.
+
+Hand-written SKILL.md files are documentation too: `help2skill lint mytool.cli:app
+skills/` checks every command they tell an agent to run, with no generated block needed.
+
 In GitHub Actions, problems show up as annotations on the pull request:
 
 ```yaml
@@ -193,6 +202,7 @@ In GitHub Actions, problems show up as annotations on the pull request:
     target: mytool.cli:app      # the CLI object
     # paths: README.md docs     # default: README.* and docs/
     # install: pip install .   # how to make the target importable (default)
+    # global-options: "true"    # see above
 ```
 
 In pytest: `help2skill.testing.assert_docs_in_sync(app, [README, DOCS])`.

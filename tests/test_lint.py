@@ -282,3 +282,79 @@ def test_diagram_blocks_are_skipped(tree):
 def test_elided_arguments_stop_the_check(tree):
     text = "```bash\nnotes add ... --tag home\nnotes add \u2026 milk extra\nnotes add ... --nope\n```\n"
     assert kinds(text, tree) == []
+
+
+def test_hidden_options_are_accepted():
+    import argparse
+
+    import click
+
+    @click.group()
+    def tool() -> None:
+        pass
+
+    @tool.command()
+    @click.option("--json", "as_json", is_flag=True, hidden=True)
+    @click.option("--limit", type=int, hidden=True)
+    def ls(as_json: bool, limit: int) -> None:
+        pass
+
+    tree = help2skill.introspect(tool, "tool")
+    assert "--json" not in help2skill.render_markdown(tree)
+    assert kinds("```bash\ntool ls --json --limit 5\ntool ls --nope\n```\n", tree) == [(3, "unknown-option")]
+
+    parser = argparse.ArgumentParser(prog="app")
+    parser.add_argument("--debug-dump", help=argparse.SUPPRESS)
+    tree = help2skill.introspect(parser)
+    assert kinds("```bash\napp --debug-dump out.txt\n```\n", tree) == []
+
+
+def test_wildcards_name_several_commands(tree):
+    text = (
+        "```bash\nnotes ad* milk\nnotes {add,rm} milk\nnotes add milk --tag-*\nnotes add milk --nope\n```\n"
+    )
+    assert kinds(text, tree) == [(5, "unknown-option")]
+
+
+def test_mermaid_labels_and_table_rows(tree):
+    text = """\
+    ```mermaid
+    flowchart TD
+      A[Start] --> B[notes add milk --nope]
+      B -->|notes ad milk| C{done?}
+      %% D[notes old-command]
+    ```
+
+    | Command | Options |
+    |---|---|
+    | `notes add milk` | `--tag home`, `--colour` |
+    | `notes add milk` | Adds a note; see `notes ad`. |
+    | `notes add / rm` | `--colour` |
+    """
+    assert kinds(text, tree) == [
+        (3, "unknown-option"),
+        (4, "unknown-command"),
+        (10, "unknown-option"),
+        (11, "unknown-command"),
+    ]
+
+
+def test_global_options_anywhere(tmp_path, monkeypatch, capsys):
+    import click
+
+    @click.group()
+    @click.option("--pretty", is_flag=True)
+    def tool(pretty: bool) -> None:
+        pass
+
+    @tool.command()
+    def schema() -> None:
+        pass
+
+    doc = tmp_path / "use.md"
+    doc.write_text("```bash\ntool schema --pretty\n```\n")
+    assert [p.kind for r in help2skill.check_docs(tool, [doc], program="tool") for p in r.problems] == [
+        "wrong-level-option"
+    ]
+    assert help2skill.check_docs(tool, [doc], program="tool", global_options=True)[0].problems == []
+    assert_docs_in_sync(tool, [doc], program="tool", global_options=True)

@@ -30,6 +30,7 @@ def from_argparse(parser: argparse.ArgumentParser, name: str | None = None) -> C
 
 def _build(parser: argparse.ArgumentParser, name: str, path: list[str], help_text: str | None) -> Command:
     params: list[Param] = []
+    hidden_params: list[Param] = []
     subcommands: list[Command] = []
     aliases_of: dict[str, list[str]] = {}
     for action in parser._actions:
@@ -46,6 +47,8 @@ def _build(parser: argparse.ArgumentParser, name: str, path: list[str], help_tex
                 subcommands.append(_build(sub_parser, sub_name, path + [sub_name], helps.get(sub_name)))
             continue
         if action.help == argparse.SUPPRESS:
+            if action.option_strings:
+                hidden_params.append(_param(action))
             continue
         params.append(_param(action))
     for sub in subcommands:
@@ -63,6 +66,7 @@ def _build(parser: argparse.ArgumentParser, name: str, path: list[str], help_tex
         params=params,
         subcommands=subcommands,
         exclusive=_exclusive_groups(parser),
+        hidden_params=hidden_params,
     )
 
 

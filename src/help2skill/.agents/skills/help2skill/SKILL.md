@@ -73,6 +73,7 @@ Arguments:
 
 Options:
 - `--exclude GLOB` (repeatable): Skip files matching this pattern, e.g. 'docs/legacy/*'; repeatable
+- `--global-options`: Accept a parent command's options after its subcommands too, for CLIs that move them in front themselves (e.g. `tool sub --verbose`)
 - `--format [text|github]`: github: also print GitHub Actions annotations (default when GITHUB_ACTIONS is set)
 - Shared options: `--program`, `--app-dir`, `--resolve`, `--from-main`
 <!-- help2skill:end -->

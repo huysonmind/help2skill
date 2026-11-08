@@ -8,7 +8,8 @@ Code blocks in other languages (Python, TOML, JSON…) are skipped. In console
 blocks (``console``, ``shell-session``) that use a prompt (``$ ``), only the
 prompt lines are commands; the others are output. A line, or the line just before a code block,
 containing ``help2skill: ignore`` is skipped. Untagged blocks drawn with
-box-drawing characters (diagrams) are skipped too.
+box-drawing characters (diagrams) are skipped too. Mermaid diagrams are read
+for the commands in their labels.
 """
 
 from __future__ import annotations
@@ -60,16 +61,55 @@ def markdown_snippets(text: str) -> Iterator[Snippet]:
                 block.append((j + 1, lines[j]))
                 j += 1
             if IGNORE_MARKER not in line and IGNORE_MARKER not in previous:
-                yield from block_snippets(block, fence.group(2).lower())
+                lang = fence.group(2).lower()
+                if lang == "mermaid":
+                    yield from mermaid_snippets(block)
+                else:
+                    yield from block_snippets(block, lang)
             previous = ""
             i = j + 1
             continue
         if IGNORE_MARKER not in line:
-            for match in _CODE_SPAN_RE.finditer(line):
-                yield i + 1, match.group(1), False
+            yield from _line_spans(i + 1, line)
         if line.strip():
             previous = line
         i += 1
+
+
+def _line_spans(lineno: int, line: str) -> Iterator[Snippet]:
+    """Code spans of one line of prose.
+
+    In a table row whose first cell is one command (`` `tool sub` ``, not
+    ``tool a / b``) and
+    whose other cells hold only options (`` `--json` ``), the options belong to
+    that command, so they are checked with it.
+    """
+    spans = [m.group(1) for m in _CODE_SPAN_RE.finditer(line)]
+    if line.lstrip().startswith("|"):
+        first, _, rest = line.strip().strip("|").partition("|")
+        command = re.fullmatch(r"\s*`([^`]+)`\s*", first)
+        others = [m.group(1) for m in _CODE_SPAN_RE.finditer(rest)]
+        single = command is not None and not re.search(r"/|,|\bor\b|\|", command.group(1))
+        if command is not None and single and others and all(span.startswith("--") for span in others):
+            yield lineno, " ".join([command.group(1), *others]), False
+            return
+    for span in spans:
+        yield lineno, span, False
+
+
+# Mermaid labels and arrows: what is left between them is plain text.
+_MERMAID_SEP_RE = re.compile(r"<br\s*/?>|-+\.?-+>|=+>|-{3,}|[\[\]{}()|<>\"]+")
+
+
+def mermaid_snippets(lines: Iterable[tuple[int, str]]) -> Iterator[Snippet]:
+    """Command lines in the node and edge labels of a Mermaid diagram."""
+    for lineno, line in lines:
+        if IGNORE_MARKER in line or line.lstrip().startswith("%%"):
+            continue  # %% starts a Mermaid comment
+        for fragment in _MERMAID_SEP_RE.split(line):
+            fragment = fragment.strip()
+            if fragment:
+                yield lineno, fragment, False
 
 
 def rst_snippets(text: str) -> Iterator[Snippet]:

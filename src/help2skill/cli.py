@@ -107,6 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip files matching this pattern, e.g. 'docs/legacy/*'; repeatable",
     )
     lint.add_argument(
+        "--global-options",
+        action="store_true",
+        help="Accept a parent command's options after its subcommands too, for CLIs that move them "
+        "in front themselves (e.g. `tool sub --verbose`)",
+    )
+    lint.add_argument(
         "--format",
         choices=["text", "github"],
         help="github: also print GitHub Actions annotations (default when GITHUB_ACTIONS is set)",
@@ -352,7 +358,13 @@ def _lint(args: argparse.Namespace, cli: Any, program: str | None, resolve: Any)
     if program is None:
         _warn_unnamed(introspect(cli, resolve=resolve).name)
     results = check_docs(
-        cli, paths, program=program, resolve=resolve, exclude=args.exclude, scripts=_script_names(args.target)
+        cli,
+        paths,
+        program=program,
+        resolve=resolve,
+        exclude=args.exclude,
+        scripts=_script_names(args.target),
+        global_options=args.global_options,
     )
     github = args.format == "github" or (args.format is None and os.environ.get("GITHUB_ACTIONS") == "true")
     problems = 0

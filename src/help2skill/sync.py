@@ -33,6 +33,8 @@ _REST_NARGS = ("...", "A...")
 _STOP_TOKENS = {"|", "||", "&&", ";", ">", ">>", "<", "--"}
 # "cmd sub ... value": the writer left arguments out, so the rest cannot be checked.
 _ELISION_TOKENS = {"...", "\u2026", "[...]", "<...>"}
+# Glob or brace patterns that name several commands or options at once.
+_WILDCARD_RE = re.compile(r"\*|\{[^{}]*,[^{}]*\}")
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # Launchers that run the real command, with their options that take a value.
 _UV_RUN_VALUE_OPTS = {
@@ -269,6 +271,9 @@ class _Walker:
             if token in _ELISION_TOKENS:
                 finished = False
                 break
+            if _WILDCARD_RE.search(token) and (token.startswith("-") or self.node.is_group):
+                finished = False  # "describe-*", "vars-{set,get}": several commands at once
+                break
             if self.at_rest_argument():
                 finished = False  # the rest of the line goes to another program
                 break
@@ -317,6 +322,9 @@ class _Walker:
         if flag in _ALWAYS_OK:
             return i + 1
         param = _find_option(self.node, flag)
+        if param is None and self.ancestors[0].global_options:
+            # The CLI moves a parent's options in front of the subcommand itself.
+            param = next((p for a in self.ancestors if (p := _find_option(a, flag))), None)
         if param is None and self.enter_default_for(flag):
             return self.option(tokens, i)
         if param is None and not flag.startswith("--") and len(flag) > 2 and not has_value:
@@ -579,6 +587,10 @@ def _find_option(cmd: Command, flag: str):
     # Arguments that may also be written as options (cyclopts: ``--name VALUE``).
     for p in cmd.arguments:
         if flag in p.secondary_opts:
+            return p
+    # Options that work but are hidden from the help.
+    for p in cmd.hidden_params:
+        if p.is_option and (flag in p.opts or flag in p.secondary_opts):
             return p
     return None
 
